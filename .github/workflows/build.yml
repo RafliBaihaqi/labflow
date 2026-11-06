@@ -116,7 +116,7 @@ jobs:
             type=semver,pattern={{major}}.{{minor}},value=${{ github.ref_name }}
 
       - name: Build and push backend
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: ./kernel
           file: ./kernel/Dockerfile
@@ -172,7 +172,7 @@ jobs:
             type=semver,pattern={{major}}.{{minor}},value=${{ github.ref_name }}
 
       - name: Build and push frontend
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: ./app
           file: ./app/Dockerfile
