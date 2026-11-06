@@ -1,0 +1,20 @@
+name: No extra markdown
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fail if non-README markdown files are tracked
+        run: |
+          violations=$(git ls-files '*.md' '*.MD' | grep -viE '(^|/)README\.md$' || true)
+          if [ -n "$violations" ]; then
+            echo "Disallowed markdown files found (only README.md is permitted):"
+            echo "$violations"
+            exit 1
+          fi
+          echo "OK: no disallowed markdown files."

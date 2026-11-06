@@ -1,0 +1,6 @@
+
+# Local load-test runs
+.lf-backend.exe
+.lf.env
+.lfrun/
+loadtest/results/smoke.json

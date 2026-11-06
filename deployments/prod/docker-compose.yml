@@ -1,0 +1,179 @@
+# Production stack for labflow - deploy dir ~/deployment/labflow/ (all files in single dir)
+# Simplified: no nginx/certbot - user handles reverse proxy themselves.
+# Only app + infra. Ports exposed for custom reverse proxy.
+# All secrets via .env (env_file). Images from GHCR, no local build.
+# Buckets are created by the backend on startup.
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+x-resources: &default-resources
+  limits:
+    cpus: "1.0"
+    memory: 512M
+  reservations:
+    cpus: "0.25"
+    memory: 128M
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: labflow-postgres
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER required}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required}
+      POSTGRES_DB: ${POSTGRES_DB:-labflow}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - labflow-network
+    logging: *default-logging
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-labflow} -d ${POSTGRES_DB:-labflow}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  redis:
+    image: redis:7-alpine
+    container_name: labflow-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes --save 60 1
+    volumes:
+      - redis_data:/data
+    networks:
+      - labflow-network
+    logging: *default-logging
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+
+  # S3-compatible object storage. SeaweedFS replaces MinIO: the minio/minio and
+  # minio/mc images are no longer published. The backend creates its buckets on startup.
+  # Keep MINIO_ROOT_USER / MINIO_ROOT_PASSWORD to letters and digits (they are written into JSON).
+  s3:
+    image: chrislusf/seaweedfs:3.97
+    container_name: labflow-s3
+    restart: unless-stopped
+    environment:
+      S3_ACCESS_KEY: ${MINIO_ROOT_USER:?MINIO_ROOT_USER required}
+      S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD required}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        printf '{"identities":[{"name":"admin","credentials":[{"accessKey":"%s","secretKey":"%s"}],"actions":["Admin","Read","List","Tagging","Write"]}]}' "$$S3_ACCESS_KEY" "$$S3_SECRET_KEY" > /tmp/s3.json
+        exec weed server -dir=/data -s3 -s3.port=9000 -s3.config=/tmp/s3.json
+    volumes:
+      - s3_data:/data
+    networks:
+      - labflow-network
+    logging: *default-logging
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:9000/status >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  backend:
+    image: ${BACKEND_IMAGE:?BACKEND_IMAGE required - e.g. ghcr.io/owner/labflow-backend:latest}
+    container_name: labflow-backend
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      ENV: production
+      DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-labflow}?sslmode=disable
+      MIGRATIONS_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-labflow}?sslmode=disable
+      REDIS_URL: redis://redis:6379/0
+      MINIO_ENDPOINT: s3:9000
+      MINIO_ACCESS: ${MINIO_ROOT_USER}
+      MINIO_SECRET: ${MINIO_ROOT_PASSWORD}
+      MINIO_BUCKET_CERTIFICATE: ${MINIO_BUCKET_CERTIFICATE:-certificates}
+      MINIO_BUCKET_RESERVATION: ${MINIO_BUCKET_RESERVATION:-reservations}
+      MINIO_BUCKET_USER: ${MINIO_BUCKET_USER:-users}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET required}
+      COOKIE_SECRET: ${COOKIE_SECRET:?COOKIE_SECRET required}
+      TURNSTILE_SECRET: ${TURNSTILE_SECRET:?TURNSTILE_SECRET required in prod - see README}
+      SMTP_HOST: ${SMTP_HOST:-localhost}
+      SMTP_PORT: ${SMTP_PORT:-1025}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      s3:
+        condition: service_healthy
+    networks:
+      - labflow-network
+    logging: *default-logging
+    deploy:
+      resources:
+        <<: *default-resources
+    ports:
+      - "127.0.0.1:8080:8080"
+    healthcheck:
+      # Use GET (curl -f) not HEAD (wget --spider) - Gin GET /health doesn't handle HEAD by default (now fixed with HEAD handler too)
+      test: ["CMD-SHELL", "curl -f http://localhost:8080/health || wget -qO- http://localhost:8080/health | grep -q ok || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 8
+      start_period: 60s
+
+  frontend:
+    image: ${FRONTEND_IMAGE:?FRONTEND_IMAGE required - e.g. ghcr.io/owner/labflow-frontend:latest}
+    container_name: labflow-frontend
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+    # Frontend should NOT block on backend health - use service_started to avoid cascade failure
+    # Backend health is checked via deploy script, but frontend can start independently
+    depends_on:
+      backend:
+        condition: service_started
+    networks:
+      - labflow-network
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
+    ports:
+      - "127.0.0.1:3000:3000"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:3000/ || wget -qO- http://localhost:3000/ > /dev/null || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+volumes:
+  postgres_data:
+    name: labflow_postgres_data
+  redis_data:
+    name: labflow_redis_data
+  s3_data:
+    name: labflow_s3_data
+
+networks:
+  labflow-network:
+    driver: bridge
+    name: labflow-network

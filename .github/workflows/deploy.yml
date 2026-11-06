@@ -1,0 +1,201 @@
+name: Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      backend_tag:
+        description: "Backend image tag to deploy (e.g., latest, <sha>, v1.0.0, or branch name). Must exist in GHCR."
+        required: true
+        default: "latest"
+        type: string
+      frontend_tag:
+        description: "Frontend image tag to deploy (e.g., latest, <sha>, v1.0.0, or branch name). Must exist in GHCR."
+        required: true
+        default: "latest"
+        type: string
+      branch:
+        description: "Optional: branch or tag to checkout compose file from (default: main). Leave empty for main."
+        required: false
+        default: "main"
+        type: string
+
+concurrency:
+  group: production
+  cancel-in-progress: false
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - name: Checkout repo (compose file)
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.branch || 'main' }}
+
+      - name: Compute lowercase owner
+        id: owner
+        run: echo "owner=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_OUTPUT"
+
+      - name: Set image refs for this deploy
+        id: images
+        run: |
+          BACKEND="${{ env.REGISTRY }}/${{ steps.owner.outputs.owner }}/labflow-backend:${{ inputs.backend_tag }}"
+          FRONTEND="${{ env.REGISTRY }}/${{ steps.owner.outputs.owner }}/labflow-frontend:${{ inputs.frontend_tag }}"
+          echo "backend=$BACKEND" >> "$GITHUB_OUTPUT"
+          echo "frontend=$FRONTEND" >> "$GITHUB_OUTPUT"
+          echo "Deploying:"
+          echo "  backend=$BACKEND"
+          echo "  frontend=$FRONTEND"
+          echo "  compose from branch=${{ inputs.branch || 'main' }}"
+
+      - name: Copy docker-compose.yml to VPS (no git clone needed)
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          source: "deployments/prod/docker-compose.yml"
+          target: "~/deployment/labflow/"
+          strip_components: 2
+          overwrite: true
+          rm: false
+
+      - name: Deploy and update VPS .env with new images
+        uses: appleboy/ssh-action@v1.2.2
+        env:
+          BACKEND_IMAGE: ${{ steps.images.outputs.backend }}
+          FRONTEND_IMAGE: ${{ steps.images.outputs.frontend }}
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          command_timeout: 20m
+          script_stop: true
+          envs: BACKEND_IMAGE,FRONTEND_IMAGE
+          script: |
+            set -euo pipefail
+            DEPLOY_DIR="${{ secrets.DEPLOY_PATH || '' }}"
+            if [ -z "$DEPLOY_DIR" ]; then
+              DEPLOY_DIR="$HOME/deployment/labflow"
+            fi
+            echo "=== Deploy target: $DEPLOY_DIR ==="
+            mkdir -p "$DEPLOY_DIR"
+            mkdir -p "$DEPLOY_DIR/backups"
+
+            cd "$DEPLOY_DIR"
+
+            echo "=== Files deployed ==="
+            ls -lh docker-compose.yml
+
+            echo "=== Checking .env ==="
+            if [ ! -f .env ]; then
+              echo "ERROR: .env not found in $DEPLOY_DIR"
+              echo "Create it from .env.example first"
+              echo "Expected: $DEPLOY_DIR/.env"
+              exit 1
+            fi
+
+            echo "=== Current .env images (before) ==="
+            grep -E "^(BACKEND_IMAGE|FRONTEND_IMAGE)=" .env || echo "No image vars yet"
+
+            echo "=== Updating .env with new images ==="
+            echo "  BACKEND_IMAGE=$BACKEND_IMAGE"
+            echo "  FRONTEND_IMAGE=$FRONTEND_IMAGE"
+
+            # Backup .env
+            cp .env .env.bak.$(date +%Y%m%d-%H%M%S) || true
+
+            # Update or add BACKEND_IMAGE
+            if grep -q "^BACKEND_IMAGE=" .env; then
+              sed -i "s|^BACKEND_IMAGE=.*|BACKEND_IMAGE=$BACKEND_IMAGE|" .env
+            else
+              echo "BACKEND_IMAGE=$BACKEND_IMAGE" >> .env
+            fi
+
+            # Update or add FRONTEND_IMAGE
+            if grep -q "^FRONTEND_IMAGE=" .env; then
+              sed -i "s|^FRONTEND_IMAGE=.*|FRONTEND_IMAGE=$FRONTEND_IMAGE|" .env
+            else
+              echo "FRONTEND_IMAGE=$FRONTEND_IMAGE" >> .env
+            fi
+
+            echo "=== New .env images (after) ==="
+            grep -E "^(BACKEND_IMAGE|FRONTEND_IMAGE)=" .env
+
+            echo "=== Logging in to GHCR ==="
+            echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+
+            echo "=== Current stack (before) ==="
+            docker compose images || true
+            docker compose ps || true
+
+            echo "=== Pulling images ==="
+            docker compose pull backend frontend
+
+            echo "=== DB backup (best-effort) ==="
+            set +e
+            BACKUP_FILE="$DEPLOY_DIR/backups/labflow-$(date +%Y%m%d-%H%M%S)-${{ inputs.backend_tag }}.sql.gz"
+            docker compose exec -T postgres pg_dump -U "${POSTGRES_USER:-labflow}" "${POSTGRES_DB:-labflow}" | gzip > "$BACKUP_FILE"
+            if [ $? -eq 0 ]; then
+              echo "Backup: $BACKUP_FILE"
+              ls -lh "$BACKUP_FILE"
+            else
+              echo "WARN: backup failed, continuing"
+              rm -f "$BACKUP_FILE" || true
+            fi
+            set -e
+
+            echo "=== Deploying ==="
+            docker compose up -d backend frontend
+
+            echo "=== Waiting backend healthy (90s) ==="
+            for i in $(seq 1 45); do
+              STATUS=$(docker inspect --format='{{.State.Health.Status}}' labflow-backend 2>/dev/null || echo "starting")
+              echo "[$i] backend: $STATUS"
+              if [ "$STATUS" = "healthy" ]; then break; fi
+              if [ $i -eq 45 ]; then
+                echo "ERROR: backend unhealthy"
+                docker compose logs --tail=150 backend || true
+                exit 1
+              fi
+              sleep 2
+            done
+
+            echo "=== Waiting frontend healthy (60s) ==="
+            for i in $(seq 1 30); do
+              STATUS=$(docker inspect --format='{{.State.Health.Status}}' labflow-frontend 2>/dev/null || echo "starting")
+              echo "[$i] frontend: $STATUS"
+              if [ "$STATUS" = "healthy" ]; then break; fi
+              if [ $i -eq 30 ]; then
+                echo "WARN: frontend not healthy (may lack healthcheck in old image)"
+                docker compose logs --tail=100 frontend || true
+              fi
+              sleep 2
+            done
+
+            echo "=== Smoke tests ==="
+            curl -fsS http://localhost:8080/health && echo "✓ backend /health" || (echo "✗ backend health failed" && exit 1)
+            curl -fsS http://localhost:3000/ >/dev/null && echo "✓ frontend /" || echo "WARN: frontend root check failed"
+
+            echo "=== Buckets check ==="
+            docker compose ps -a | grep minio-init || true
+            docker logs labflow-minio-init --tail=20 || true
+
+            echo "=== Pruning images older than 72h ==="
+            docker image prune -f --filter "until=72h" || true
+
+            echo "=== Post-deploy ==="
+            docker compose ps
+            docker compose images backend frontend | tail -n +2
+
+            echo "=== Deploy SUCCESS ==="
+            echo "Backend: $BACKEND_IMAGE"
+            echo "Frontend: $FRONTEND_IMAGE"
+            echo "Tag: backend=${{ inputs.backend_tag }}, frontend=${{ inputs.frontend_tag }}, branch=${{ inputs.branch || 'main' }}"

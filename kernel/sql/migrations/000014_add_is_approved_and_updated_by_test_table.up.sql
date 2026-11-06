@@ -1,0 +1,1 @@
+ALTER TABLE tests ADD is_approved BOOLEAN DEFAULT FALSE, ADD updated_by INTEGER;
