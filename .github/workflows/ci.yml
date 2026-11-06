@@ -1,0 +1,195 @@
+name: CI
+
+on:
+  push:
+    branches-ignore: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Backend - Build & Test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: kernel
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.0"
+          cache-dependency-path: kernel/go.sum
+
+      - name: Go mod tidy check
+        run: go mod tidy && git diff --exit-code go.mod go.sum
+
+      - name: Go vet
+        run: go vet ./...
+
+      - name: Go build
+        run: go build ./...
+
+      - name: Go test
+        run: go test ./... -count=1 -timeout 5m
+
+  frontend:
+    name: Frontend - Typecheck & Build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: app/package-lock.json
+
+      - name: Install deps
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build
+        run: npm run build
+
+  e2e:
+    name: E2E (Playwright) & load smoke (k6)
+    # Pinned: Playwright 1.56 cannot install browsers on the ubuntu-26.04 image
+    # that ubuntu-latest is rolling out to.
+    runs-on: ubuntu-24.04
+    needs: [backend, frontend]
+    env:
+      COMPOSE: docker compose -f deployments/loadtest/docker-compose.yml --profile app
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Start stack (backend, Postgres, Redis, S3, Prometheus)
+        run: |
+          $COMPOSE up -d --build --wait postgres redis s3 mailpit
+          $COMPOSE up -d --build backend
+          for i in $(seq 1 60); do curl -sf localhost:8080/health && break; sleep 2; done
+          curl -sf localhost:8080/health
+
+      - name: Seed database
+        run: $COMPOSE run --rm backend seed
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: app/package-lock.json
+
+      - name: Install deps and browsers
+        working-directory: app
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+
+      - name: Playwright
+        working-directory: app
+        run: npm run test:e2e
+
+      - name: Set up k6
+        uses: grafana/setup-k6-action@v1
+
+      - name: k6 smoke (thresholds must pass)
+        run: k6 run loadtest/k6/lifecycle.js
+        env:
+          RATE: "30"
+          DURATION: "30s"
+          SUMMARY_PATH: loadtest/results/ci-smoke.json
+
+      - name: Upload reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-and-load-reports
+          path: |
+            app/playwright-report
+            loadtest/results/ci-smoke.json
+          if-no-files-found: ignore
+
+      - name: Backend logs on failure
+        if: failure()
+        run: $COMPOSE logs backend --tail=200
+
+  docker-lint:
+    name: Docker - Lint Dockerfiles
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Hadolint - backend
+        uses: hadolint/hadolint-action@v3.5.0
+        with:
+          dockerfile: kernel/Dockerfile
+          failure-threshold: error
+      - name: Hadolint - frontend
+        uses: hadolint/hadolint-action@v3.5.0
+        with:
+          dockerfile: app/Dockerfile
+          failure-threshold: error
+
+  compose-validate:
+    name: Compose - Validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create dummy .env for prod compose validation (env_file required)
+        run: |
+          touch deployments/prod/.env
+          touch deployments/dev/.env || true
+      - name: Validate dev compose
+        run: docker compose -f deployments/dev/docker-compose.yml config -q
+      - name: Validate prod compose
+        run: docker compose -f deployments/prod/docker-compose.yml config -q
+        env:
+          POSTGRES_USER: labflow
+          POSTGRES_PASSWORD: testpassword123
+          POSTGRES_DB: labflow
+          MINIO_ROOT_USER: minioadmin
+          MINIO_ROOT_PASSWORD: minioadmin123456
+          JWT_SECRET: test-jwt-secret-min-32-chars-long!!
+          COOKIE_SECRET: test-cookie-secret-min-32-chars!!
+          BACKEND_IMAGE: ghcr.io/test/labflow-backend:latest
+          FRONTEND_IMAGE: ghcr.io/test/labflow-frontend:latest
+          TURNSTILE_SECRET: CHANGE_ME_CLOUDFLARE_TURNSTILE_SECRET
+      - name: Smoke-test dev object storage (credentials enforced)
+        run: |
+          docker compose -f deployments/dev/docker-compose.yml up -d --wait s3
+          export AWS_ACCESS_KEY_ID=minioadmin AWS_SECRET_ACCESS_KEY=minioadmin AWS_DEFAULT_REGION=us-east-1
+          S3="aws --endpoint-url http://127.0.0.1:9000 s3"
+          $S3 mb s3://ci-smoke
+          echo ok > /tmp/obj && $S3 cp /tmp/obj s3://ci-smoke/obj && $S3 ls s3://ci-smoke
+          if AWS_SECRET_ACCESS_KEY=wrong $S3 ls s3://ci-smoke; then
+            echo "storage accepted a wrong secret key"; exit 1
+          fi
+      - name: Storage logs on failure
+        if: failure()
+        run: docker compose -f deployments/dev/docker-compose.yml logs s3 --tail=100
+
+  markdown-policy:
+    name: Docs - Markdown Policy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fail if non-README markdown files are tracked
+        run: |
+          violations=$(git ls-files '*.md' '*.MD' | grep -viE '(^|/)README\.md$' || true)
+          if [ -n "$violations" ]; then
+            echo "Disallowed markdown files found (only README.md is permitted):"
+            echo "$violations"
+            exit 1
+          fi
+          echo "OK: no disallowed markdown files."

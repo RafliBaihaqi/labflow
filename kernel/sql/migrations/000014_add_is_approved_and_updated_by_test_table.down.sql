@@ -1,0 +1,1 @@
+ALTER TABLE tests DROP COLUMN is_approved, DROP COLUMN updated_by;

@@ -1,0 +1,33 @@
+# Go backend - keep sql/migrations!
+node_modules
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+.env
+.env.local
+.env.*.local
+*.log
+.vscode
+.idea
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+docs/
+sqlc/
+# Do NOT ignore *.sql globally - migrations must be copied into image
+# Old line "*.sql" removed - it was breaking COPY sql/migrations
+sqlc.yaml
+Makefile
+README.md
+coverage.*
+*.coverprofile
+profile.cov
+result
+result-*
+.direnv/

@@ -1,0 +1,7 @@
+global:
+  scrape_interval: 5s
+scrape_configs:
+  - job_name: labflow-backend
+    static_configs:
+      # backend container (profile "app") or a backend running on the host
+      - targets: ["backend:8080", "host.docker.internal:8080"]

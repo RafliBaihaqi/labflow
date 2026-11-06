@@ -1,0 +1,17 @@
+node_modules
+.react-router
+build
+dist
+.env
+.env.local
+.env.*.local
+*.log
+npm-debug.log*
+.vscode
+.idea
+.git
+.gitignore
+README.md
+coverage
+.nyc_output
+.turbo

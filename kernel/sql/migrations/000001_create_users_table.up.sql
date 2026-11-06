@@ -1,0 +1,21 @@
+CREATE TABLE users (
+    id SERIAL PRIMARY KEY,
+    xid UUID NOT NULL UNIQUE,
+    username VARCHAR(255) NOT NULL UNIQUE,
+    password VARCHAR(255) NOT NULL,
+    email VARCHAR(255) NOT NULL UNIQUE,
+    phone_number VARCHAR(255) UNIQUE,
+    name VARCHAR(255) NOT NULL,
+    company VARCHAR(255),
+    address TEXT,
+    verification_token TEXT,
+    verification_exp TIMESTAMPTZ,
+    is_verified BOOLEAN DEFAULT FALSE,
+    reset_password_token TEXT,
+    reset_password_exp TIMESTAMPTZ,
+    session_id VARCHAR(255),
+    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    updated_by INTEGER,
+    Avatar VARCHAR(255) 
+);
