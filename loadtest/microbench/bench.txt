@@ -1,0 +1,38 @@
+goos: windows
+goarch: amd64
+pkg: labflow-microbench
+cpu: 12th Gen Intel(R) Core(TM) i3-1220P
+BenchmarkGinDetail-12        	  176284	      6581 ns/op	    5910 B/op	      22 allocs/op
+BenchmarkGinDetail-12        	  190528	      6530 ns/op	    5912 B/op	      22 allocs/op
+BenchmarkGinDetail-12        	  171940	      6934 ns/op	    5910 B/op	      22 allocs/op
+BenchmarkGinDetail-12        	  180104	      6763 ns/op	    5907 B/op	      22 allocs/op
+BenchmarkGinDetail-12        	  175660	      6701 ns/op	    5914 B/op	      22 allocs/op
+BenchmarkGinDetail-12        	  190158	      6730 ns/op	    5917 B/op	      22 allocs/op
+BenchmarkGinDetail-12        	  177278	      6710 ns/op	    5913 B/op	      22 allocs/op
+BenchmarkGinDetail-12        	  175138	      6434 ns/op	    5913 B/op	      22 allocs/op
+BenchmarkNetHTTPDetail-12    	  193598	      6854 ns/op	    5886 B/op	      24 allocs/op
+BenchmarkNetHTTPDetail-12    	  186130	      7179 ns/op	    5886 B/op	      24 allocs/op
+BenchmarkNetHTTPDetail-12    	  161029	      7091 ns/op	    5886 B/op	      24 allocs/op
+BenchmarkNetHTTPDetail-12    	  186327	      6844 ns/op	    5886 B/op	      24 allocs/op
+BenchmarkNetHTTPDetail-12    	  177819	      7857 ns/op	    5886 B/op	      24 allocs/op
+BenchmarkNetHTTPDetail-12    	  172686	      7182 ns/op	    5886 B/op	      24 allocs/op
+BenchmarkNetHTTPDetail-12    	  153800	      7836 ns/op	    5885 B/op	      24 allocs/op
+BenchmarkNetHTTPDetail-12    	  180302	      7005 ns/op	    5886 B/op	      24 allocs/op
+BenchmarkGinStats-12         	  558331	      2356 ns/op	    2001 B/op	      20 allocs/op
+BenchmarkGinStats-12         	  601135	      2532 ns/op	    2004 B/op	      20 allocs/op
+BenchmarkGinStats-12         	  559202	      2618 ns/op	    2002 B/op	      20 allocs/op
+BenchmarkGinStats-12         	  435826	      2414 ns/op	    2004 B/op	      20 allocs/op
+BenchmarkGinStats-12         	  519280	      2357 ns/op	    2003 B/op	      20 allocs/op
+BenchmarkGinStats-12         	  526959	      2714 ns/op	    2004 B/op	      20 allocs/op
+BenchmarkGinStats-12         	  380920	      2766 ns/op	    2005 B/op	      20 allocs/op
+BenchmarkGinStats-12         	  399894	      2606 ns/op	    2007 B/op	      20 allocs/op
+BenchmarkNetHTTPStats-12     	  347114	      3078 ns/op	    1817 B/op	      19 allocs/op
+BenchmarkNetHTTPStats-12     	  583464	      2206 ns/op	    1817 B/op	      19 allocs/op
+BenchmarkNetHTTPStats-12     	  626190	      2114 ns/op	    1817 B/op	      19 allocs/op
+BenchmarkNetHTTPStats-12     	  657192	      2240 ns/op	    1817 B/op	      19 allocs/op
+BenchmarkNetHTTPStats-12     	  557650	      2379 ns/op	    1817 B/op	      19 allocs/op
+BenchmarkNetHTTPStats-12     	  633448	      2100 ns/op	    1817 B/op	      19 allocs/op
+BenchmarkNetHTTPStats-12     	  609652	      2165 ns/op	    1817 B/op	      19 allocs/op
+BenchmarkNetHTTPStats-12     	  611654	      2074 ns/op	    1817 B/op	      19 allocs/op
+PASS
+ok  	labflow-microbench	40.339s
