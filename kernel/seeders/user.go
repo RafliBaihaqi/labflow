@@ -1,17 +1,18 @@
 package seeders
 
 import (
+	"context"
 	"labflow/models"
+	"labflow/sqlc"
 	"log"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"golang.org/x/crypto/bcrypt"
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 )
 
-func SeedUser(g *gorm.DB) {
-	db := g
+func SeedUser(ctx context.Context, pool *pgxpool.Pool) {
+	q := sqlc.New(pool)
 	defaultPassword := "password123"
 	hashedPasswordBytes, err := bcrypt.GenerateFromPassword([]byte(defaultPassword), 12)
 	if err != nil {
@@ -133,15 +134,22 @@ func SeedUser(g *gorm.DB) {
 
 	for _, u := range users {
 		// Upsert user
-		if err := db.Clauses(clause.OnConflict{
-			Columns:   []clause.Column{{Name: "username"}},
-			DoNothing: true,
-		}).Create(&u).Error; err != nil {
+		if err := q.SeedUser(ctx, sqlc.SeedUserParams{
+			Xid:         u.XID,
+			Username:    u.Username,
+			Password:    u.Password,
+			Email:       u.Email,
+			PhoneNumber: &u.PhoneNumber,
+			Name:        u.Name,
+			Company:     &u.Company,
+			Address:     &u.Address,
+			IsVerified:  u.IsVerified,
+		}); err != nil {
 			log.Fatalf("Failed to seed user %s: %v", u.Username, err)
 		}
 		// Fetch back to get generated ID
-		var existing models.User
-		if err := db.Where("username = ?", u.Username).First(&existing).Error; err != nil {
+		existing, err := q.GetUserByUsername(ctx, u.Username)
+		if err != nil {
 			log.Printf("User %s already exists or not found, skipping role assignment", u.Username)
 			continue
 		}
@@ -169,7 +177,7 @@ func SeedUser(g *gorm.DB) {
 		}
 		// Insert user_role join
 		if roleID > 0 {
-			if err := db.Exec("INSERT INTO user_roles (user_id, role_id) VALUES (?, ?) ON CONFLICT DO NOTHING", existing.ID, roleID).Error; err != nil {
+			if err := q.SeedUserRole(ctx, sqlc.SeedUserRoleParams{UserID: existing.ID, RoleID: roleID}); err != nil {
 				log.Fatalf("Failed to assign role %d to user %s: %v", roleID, existing.Username, err)
 			}
 		}

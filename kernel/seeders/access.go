@@ -1,15 +1,16 @@
 package seeders
 
 import (
+	"context"
 	"labflow/models"
+	"labflow/sqlc"
 	"log"
 
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-func SeedAccess(g *gorm.DB) {
-	db := g
+func SeedAccess(ctx context.Context, pool *pgxpool.Pool) {
+	q := sqlc.New(pool)
 	accesses := []models.Access{
 		{ID: 1, AccessName: func(s string) *string { return &s }("create_user")},
 		{ID: 2, AccessName: func(s string) *string { return &s }("read_user")},
@@ -40,7 +41,9 @@ func SeedAccess(g *gorm.DB) {
 		{ID: 27, AccessName: func(s string) *string { return &s }("export_reservation")},
 		{ID: 28, AccessName: func(s string) *string { return &s }("read_lifecycle")},
 	}
-	if err := db.Clauses(clause.OnConflict{DoNothing: true}).Create(&accesses).Error; err != nil {
-		log.Fatalf("Failed to seed access data: %v", err)
+	for _, a := range accesses {
+		if err := q.SeedAccess(ctx, sqlc.SeedAccessParams{AccessID: a.ID, AccessName: a.AccessName}); err != nil {
+			log.Fatalf("Failed to seed access data: %v", err)
+		}
 	}
 }

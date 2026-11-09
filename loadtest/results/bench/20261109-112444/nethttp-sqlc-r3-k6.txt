@@ -1,0 +1,8 @@
+
+scenario  p50       p95       p99
+browse    2.9ms     26.0ms    39.2ms
+submit    5.4ms     45.5ms    85.8ms
+login     237.5ms   250.8ms   287.2ms
+requests: 35280 (220/s)  failed: 0.00%
+reservations created: 480
+all thresholds passed

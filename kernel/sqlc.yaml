@@ -22,5 +22,30 @@ sql:
               type: "UUID"
           - db_type: "timestamptz"
             go_type: "time.Time"
+          - db_type: "timestamptz"
+            nullable: true
+            go_type:
+              import: "time"
+              type: "Time"
+              pointer: true
+          # Migrations spell this both TIMESTAMPTZ and TIMESTAMP WITH TIME ZONE.
+          - db_type: "pg_catalog.timestamptz"
+            go_type: "time.Time"
+          - db_type: "pg_catalog.timestamptz"
+            nullable: true
+            go_type:
+              import: "time"
+              type: "Time"
+              pointer: true
           - db_type: "date"
             go_type: "time.Time"
+          # int4 and serial columns map to int, the type the domain models use.
+          - db_type: "pg_catalog.int4"
+            go_type: "int"
+          - db_type: "pg_catalog.int4"
+            nullable: true
+            go_type:
+              type: "int"
+              pointer: true
+          - db_type: "serial"
+            go_type: "int"

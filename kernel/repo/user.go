@@ -4,54 +4,32 @@ import (
 	"context"
 	"fmt"
 	"labflow/models"
-	"time"
+	"labflow/sqlc"
 
 	"github.com/google/uuid"
-	"gorm.io/gorm"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type UserRepo struct {
-	db *gorm.DB
+	q *sqlc.Queries
 }
 
-func NewUserRepo(db *gorm.DB) *UserRepo {
-	return &UserRepo{db: db}
-}
-
-type UpdateUserParams struct {
-	PhoneNumber *string
-	Company     *string
-	Address     *string
-	Avatar      *string
-	UpdatedBy   *int
+func NewUserRepo(pool *pgxpool.Pool) *UserRepo {
+	return &UserRepo{q: sqlc.New(pool)}
 }
 
 func (u *UserRepo) UpdateUserByXid(ctx context.Context, xid uuid.UUID, phoneNumber, company, address, avatar *string, updatedBy int) (*models.User, error) {
-	params := UpdateUserParams{
+	row, err := u.q.UpdateUserProfile(ctx, sqlc.UpdateUserProfileParams{
+		Xid:         xid,
 		PhoneNumber: phoneNumber,
 		Company:     company,
 		Address:     address,
 		Avatar:      avatar,
 		UpdatedBy:   &updatedBy,
-	}
-
-	updates := map[string]interface{}{
-		"phone_number": params.PhoneNumber,
-		"company":      params.Company,
-		"address":      params.Address,
-		"avatar":       params.Avatar,
-		"updated_at":   time.Now(),
-		"updated_by":   params.UpdatedBy,
-	}
-
-	if err := u.db.Model(&models.User{}).Where("xid = ?", xid).Updates(updates).Error; err != nil {
+	})
+	if err != nil {
 		return nil, fmt.Errorf("failed to update reservation: %w", wrapDBError(err))
 	}
-
-	var updated models.User
-	if err := u.db.Where("xid = ?", xid).First(&updated).Error; err != nil {
-		return nil, wrapDBError(err)
-	}
-
+	updated := toUser(row)
 	return &updated, nil
 }

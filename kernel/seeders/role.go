@@ -1,15 +1,16 @@
 package seeders
 
 import (
+	"context"
 	"labflow/models"
+	"labflow/sqlc"
 	"log"
 
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-func SeedRole(g *gorm.DB) {
-	db := g
+func SeedRole(ctx context.Context, pool *pgxpool.Pool) {
+	q := sqlc.New(pool)
 	roles := []models.Role{
 		{ID: 1, RoleName: func(s string) *string { return &s }("admin")},
 		{ID: 2, RoleName: func(s string) *string { return &s }("customer")},
@@ -21,7 +22,9 @@ func SeedRole(g *gorm.DB) {
 		{ID: 8, RoleName: func(s string) *string { return &s }("lab-head")},
 		{ID: 9, RoleName: func(s string) *string { return &s }("mr")},
 	}
-	if err := db.Clauses(clause.OnConflict{DoNothing: true}).Create(&roles).Error; err != nil {
-		log.Fatalf("Failed to seed role data: %v", err)
+	for _, r := range roles {
+		if err := q.SeedRole(ctx, sqlc.SeedRoleParams{RoleID: r.ID, RoleName: r.RoleName}); err != nil {
+			log.Fatalf("Failed to seed role data: %v", err)
+		}
 	}
 }

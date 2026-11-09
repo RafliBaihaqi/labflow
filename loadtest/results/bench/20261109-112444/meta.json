@@ -1,0 +1,10 @@
+{
+  "run_id": "20261109-112444", "rounds": 4, "warmup_rounds": 1, "rate": 60, "duration": "2m",
+  "api_cpus": 2, "api_memory": "512m", "k6_image": "grafana/k6:2.3.0",
+  "host": "12 threads, 3703 MiB RAM, 6.6.87.2-microsoft-standard-WSL2",
+  "variants": {
+    "gin-gorm": {"ref": "main", "sha": "c95d513", "image_bytes": 152430345, "binary_bytes": 45535394},
+    "nethttp-gorm": {"ref": "refactor/net-http", "sha": "3d49983", "image_bytes": 137946222, "binary_bytes": 34713762},
+    "nethttp-sqlc": {"ref": "refactor/sqlc", "sha": "a1b825b", "image_bytes": 135649330, "binary_bytes": 33075362}
+  }
+}

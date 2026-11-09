@@ -1,0 +1,10 @@
+time="2026-11-09T04:28:08Z" level=warning msg="Insufficient VUs, reached 300 active VUs and cannot initialize more" executor=ramping-arrival-rate scenario=browse
+
+scenario  p50       p95       p99
+browse    8.8ms     3229.5ms  5835.7ms
+submit    47.0ms    1588.4ms  3960.6ms
+login     303.1ms   1978.6ms  3141.2ms
+requests: 34183 (213/s)  failed: 0.00%
+reservations created: 481
+THRESHOLDS FAILED: http_req_duration{scenario:browse}, http_req_duration{scenario:login}, http_req_duration{scenario:submit}
+time="2026-11-09T04:29:02Z" level=error msg="thresholds on metrics 'http_req_duration{scenario:browse}, http_req_duration{scenario:login}, http_req_duration{scenario:submit}' have been crossed"
