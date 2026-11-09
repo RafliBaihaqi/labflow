@@ -2,13 +2,13 @@ package middleware
 
 import (
 	"fmt"
+	"labflow/httpx"
 	"log"
 	"net/http"
 	"os"
 	"strconv"
 	"time"
 
-	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 )
@@ -33,96 +33,78 @@ func rateLimitDisabled() bool {
 	return true
 }
 
-func RateLimiter(redisClient *redis.Client, config RateLimitConfig) gin.HandlerFunc {
+func RateLimiter(redisClient *redis.Client, config RateLimitConfig) httpx.Middleware {
 	disabled := rateLimitDisabled()
-	return func(c *gin.Context) {
-		if disabled || redisClient == nil {
-			c.Next()
-			return
-		}
-
-		ns := config.Namespace
-		if ns == "" {
-			ns = "default"
-		}
-
-		// Key resolution: check for authenticated user ID (int, int64, float64, or string) set by JWT middleware
-		var key string
-		if userIDVal, exists := c.Get("id"); exists {
-			switch val := userIDVal.(type) {
-			case int:
-				if val > 0 {
-					key = fmt.Sprintf("rate_limit:%s:user:%d", ns, val)
-				}
-			case int64:
-				if val > 0 {
-					key = fmt.Sprintf("rate_limit:%s:user:%d", ns, val)
-				}
-			case float64:
-				if val > 0 {
-					key = fmt.Sprintf("rate_limit:%s:user:%d", ns, int(val))
-				}
-			case string:
-				if val != "" {
-					key = fmt.Sprintf("rate_limit:%s:user:%s", ns, val)
-				}
-			}
-		}
-
-		if key == "" {
-			key = fmt.Sprintf("rate_limit:%s:ip:%s", ns, c.ClientIP())
-		}
-
-		now := time.Now().UnixMilli()
-		windowMs := config.Window.Milliseconds()
-		member := uuid.NewString()
-
-		// Execute atomic Lua script
-		res, err := redisClient.Eval(c.Request.Context(), slidingWindowLuaScript, []string{key}, now, windowMs, config.Limit, member).Result()
-		if err != nil {
-			log.Printf("[RateLimiter] redis error (failing open): %v", err)
-			c.Next()
-			return
-		}
-
-		results, ok := res.([]interface{})
-		if !ok || len(results) < 2 {
-			log.Printf("[RateLimiter] unexpected redis response format (failing open)")
-			c.Next()
-			return
-		}
-
-		allowed, ok1 := results[0].(int64)
-		remaining, ok2 := results[1].(int64)
-		if !ok1 || !ok2 {
-			log.Printf("[RateLimiter] unexpected redis result types (failing open)")
-			c.Next()
-			return
-		}
-
-		c.Header("X-RateLimit-Limit", strconv.Itoa(config.Limit))
-		c.Header("X-RateLimit-Remaining", strconv.FormatInt(remaining, 10))
-
-		if allowed == 0 {
-			// Estimate retry after: oldest score in ZSET + window duration - now
-			retryAfterSec := int(config.Window.Seconds())
-			ctx := c.Request.Context()
-			oldest, err := redisClient.ZRangeWithScores(ctx, key, 0, 0).Result()
-			if err == nil && len(oldest) > 0 {
-				elapsedMs := now - int64(oldest[0].Score)
-				remainingMs := windowMs - elapsedMs
-				if remainingMs > 0 {
-					retryAfterSec = int(remainingMs/1000) + 1
-				}
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if disabled || redisClient == nil {
+				next.ServeHTTP(w, r)
+				return
 			}
 
-			c.Header("Retry-After", strconv.Itoa(retryAfterSec))
-			c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{
-				"error": "rate limit exceeded. please try again later.",
-			})
-			return
-		}
+			ns := config.Namespace
+			if ns == "" {
+				ns = "default"
+			}
 
-		c.Next()
+			// Key by the authenticated user when the JWT middleware has run, else by IP.
+			var key string
+			if userID, ok := httpx.UserID(r.Context()); ok && userID > 0 {
+				key = fmt.Sprintf("rate_limit:%s:user:%d", ns, userID)
+			} else {
+				key = fmt.Sprintf("rate_limit:%s:ip:%s", ns, httpx.ClientIP(r))
+			}
+
+			now := time.Now().UnixMilli()
+			windowMs := config.Window.Milliseconds()
+			member := uuid.NewString()
+
+			// Execute atomic Lua script
+			res, err := redisClient.Eval(r.Context(), slidingWindowLuaScript, []string{key}, now, windowMs, config.Limit, member).Result()
+			if err != nil {
+				log.Printf("[RateLimiter] redis error (failing open): %v", err)
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			results, ok := res.([]interface{})
+			if !ok || len(results) < 2 {
+				log.Printf("[RateLimiter] unexpected redis response format (failing open)")
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			allowed, ok1 := results[0].(int64)
+			remaining, ok2 := results[1].(int64)
+			if !ok1 || !ok2 {
+				log.Printf("[RateLimiter] unexpected redis result types (failing open)")
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			w.Header().Set("X-RateLimit-Limit", strconv.Itoa(config.Limit))
+			w.Header().Set("X-RateLimit-Remaining", strconv.FormatInt(remaining, 10))
+
+			if allowed == 0 {
+				// Estimate retry after: oldest score in ZSET + window duration - now
+				retryAfterSec := int(config.Window.Seconds())
+				oldest, err := redisClient.ZRangeWithScores(r.Context(), key, 0, 0).Result()
+				if err == nil && len(oldest) > 0 {
+					elapsedMs := now - int64(oldest[0].Score)
+					remainingMs := windowMs - elapsedMs
+					if remainingMs > 0 {
+						retryAfterSec = int(remainingMs/1000) + 1
+					}
+				}
+
+				w.Header().Set("Retry-After", strconv.Itoa(retryAfterSec))
+				httpx.WriteJSON(w, http.StatusTooManyRequests, map[string]string{
+					"error": "rate limit exceeded. please try again later.",
+				})
+				return
+			}
+
+			next.ServeHTTP(w, r)
+		})
 	}
 }

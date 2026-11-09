@@ -2,58 +2,54 @@ package middleware
 
 import (
 	"labflow/auth"
+	"labflow/httpx"
 	"net/http"
 	"strings"
-
-	"github.com/gin-gonic/gin"
 )
 
-func JWTMiddleware(tokenUtil *auth.TokenUtil) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		authHeader := c.GetHeader("Authorization")
-		if authHeader == "" {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized - No token provided"})
-			c.Abort()
-			return
-		}
+func JWTMiddleware(tokenUtil *auth.TokenUtil) httpx.Middleware {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			authHeader := r.Header.Get("Authorization")
+			if authHeader == "" {
+				httpx.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "Unauthorized - No token provided"})
+				return
+			}
 
-		tokenString := strings.TrimPrefix(authHeader, "Bearer ")
-		// 2. Extract token from bearer
-		if tokenString == authHeader {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized - Invalid token format"})
-			c.Abort()
-			return
-		}
+			tokenString := strings.TrimPrefix(authHeader, "Bearer ")
+			// 2. Extract token from bearer
+			if tokenString == authHeader {
+				httpx.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "Unauthorized - Invalid token format"})
+				return
+			}
 
-		// 3. Pass and validate the token
-		authToken, err := tokenUtil.ParseJWT(c, tokenString)
-		if err != nil {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized - Invalid token"})
-			c.Abort()
-			return
-		}
-		c.Set("id", authToken.ID)
-		c.Next()
+			// 3. Pass and validate the token
+			authToken, err := tokenUtil.ParseJWT(r.Context(), tokenString)
+			if err != nil {
+				httpx.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "Unauthorized - Invalid token"})
+				return
+			}
+			next.ServeHTTP(w, r.WithContext(httpx.WithUserID(r.Context(), authToken.ID)))
+		})
 	}
 }
 
-func JWTCookieMiddleware(tokenUtil *auth.TokenUtil) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		authHeader, err := c.Cookie("Authorization")
-		if err != nil {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized - No token provided"})
-			c.Abort()
-			return
-		}
+func JWTCookieMiddleware(tokenUtil *auth.TokenUtil) httpx.Middleware {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			cookie, err := r.Cookie("Authorization")
+			if err != nil {
+				httpx.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "Unauthorized - No token provided"})
+				return
+			}
 
-		// 3. Pass and validate the token
-		authToken, err := tokenUtil.ParseJWT(c, authHeader)
-		if err != nil {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized - Invalid token"})
-			c.Abort()
-			return
-		}
-		c.Set("id", authToken.ID)
-		c.Next()
+			// 3. Pass and validate the token
+			authToken, err := tokenUtil.ParseJWT(r.Context(), cookie.Value)
+			if err != nil {
+				httpx.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "Unauthorized - Invalid token"})
+				return
+			}
+			next.ServeHTTP(w, r.WithContext(httpx.WithUserID(r.Context(), authToken.ID)))
+		})
 	}
 }

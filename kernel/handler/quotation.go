@@ -4,11 +4,11 @@ import (
 	"errors"
 	"labflow/apperr"
 	"labflow/dto"
+	"labflow/httpx"
 	"labflow/service"
 	"net/http"
 	"strconv"
 
-	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 )
 
@@ -20,25 +20,25 @@ func NewQuotationHandler(qsvc *service.QuotationService) *QuotationHandler {
 	return &QuotationHandler{qsvc: qsvc}
 }
 
-func (qh *QuotationHandler) CreateQuotation(c *gin.Context) {
+func (qh *QuotationHandler) CreateQuotation(w http.ResponseWriter, r *http.Request) {
 	var req dto.CreateQuotationRequest
-	if err := dto.BindStrictJSON(c, &req); err != nil {
-		c.JSON(400, dto.ErrorResponse{Error: "invalid request", Message: err.Error()})
+	if err := dto.BindStrictJSON(r, &req); err != nil {
+		httpx.WriteJSON(w, 400, dto.ErrorResponse{Error: "invalid request", Message: err.Error()})
 		return
 	}
 
-	quo, err := qh.qsvc.CreateQuotation(c.Request.Context(), service.CreateQuotationParams{
+	quo, err := qh.qsvc.CreateQuotation(r.Context(), service.CreateQuotationParams{
 		Email:       req.Email,
 		CompanyName: req.CompanyName,
 		PhoneNumber: req.PhoneNumber,
 		Message:     req.Message,
 	})
 	if err != nil {
-		c.JSON(500, dto.ErrorResponse{Error: "failed to create quotation", Message: err.Error()})
+		httpx.WriteJSON(w, 500, dto.ErrorResponse{Error: "failed to create quotation", Message: err.Error()})
 		return
 	}
 
-	c.JSON(201, dto.CreateQuotationResponse{
+	httpx.WriteJSON(w, 201, dto.CreateQuotationResponse{
 		XID:         quo.XID,
 		Email:       quo.Email,
 		CompanyName: quo.CompanyName,
@@ -47,14 +47,14 @@ func (qh *QuotationHandler) CreateQuotation(c *gin.Context) {
 	})
 }
 
-func (qh *QuotationHandler) ListQuotations(c *gin.Context) {
-	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
-	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "10"))
-	search := c.Query("search")
+func (qh *QuotationHandler) ListQuotations(w http.ResponseWriter, r *http.Request) {
+	page, _ := strconv.Atoi(httpx.QueryDefault(r, "page", "1"))
+	limit, _ := strconv.Atoi(httpx.QueryDefault(r, "limit", "10"))
+	search := r.URL.Query().Get("search")
 
-	resp, err := qh.qsvc.ListQuotations(c.Request.Context(), search, page, limit)
+	resp, err := qh.qsvc.ListQuotations(r.Context(), search, page, limit)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, dto.ErrorResponse{Error: "internal_error", Message: err.Error()})
+		httpx.WriteJSON(w, http.StatusInternalServerError, dto.ErrorResponse{Error: "internal_error", Message: err.Error()})
 		return
 	}
 
@@ -70,7 +70,7 @@ func (qh *QuotationHandler) ListQuotations(c *gin.Context) {
 		})
 	}
 
-	c.JSON(http.StatusOK, dto.PaginatedQuotationResponse{
+	httpx.WriteJSON(w, http.StatusOK, dto.PaginatedQuotationResponse{
 		Data:       data,
 		Total:      resp.Total,
 		Page:       resp.Page,
@@ -79,27 +79,27 @@ func (qh *QuotationHandler) ListQuotations(c *gin.Context) {
 	})
 }
 
-func (qh *QuotationHandler) UpdateQuotationStatus(c *gin.Context) {
-	xid, err := uuid.Parse(c.Param("xid"))
+func (qh *QuotationHandler) UpdateQuotationStatus(w http.ResponseWriter, r *http.Request) {
+	xid, err := uuid.Parse(r.PathValue("xid"))
 	if err != nil {
-		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: "invalid xid", Message: err.Error()})
+		httpx.WriteJSON(w, http.StatusBadRequest, dto.ErrorResponse{Error: "invalid xid", Message: err.Error()})
 		return
 	}
 
 	var req dto.UpdateQuotationStatusRequest
-	if err := dto.BindStrictJSON(c, &req); err != nil {
-		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: "invalid request", Message: err.Error()})
+	if err := dto.BindStrictJSON(r, &req); err != nil {
+		httpx.WriteJSON(w, http.StatusBadRequest, dto.ErrorResponse{Error: "invalid request", Message: err.Error()})
 		return
 	}
 
-	quo, err := qh.qsvc.UpdateQuotationStatus(c.Request.Context(), xid, req.Status)
+	quo, err := qh.qsvc.UpdateQuotationStatus(r.Context(), xid, req.Status)
 	if err != nil {
 		status, body := mapQuotationError(err)
-		c.JSON(status, body)
+		httpx.WriteJSON(w, status, body)
 		return
 	}
 
-	c.JSON(http.StatusOK, dto.QuotationResponse{
+	httpx.WriteJSON(w, http.StatusOK, dto.QuotationResponse{
 		XID:         quo.XID,
 		Email:       quo.Email,
 		CompanyName: quo.CompanyName,

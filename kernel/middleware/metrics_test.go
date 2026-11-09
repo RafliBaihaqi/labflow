@@ -5,21 +5,19 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/gin-gonic/gin"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 )
 
 func TestMetricsLabelsByRouteTemplate(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	r := gin.New()
-	r.Use(Metrics())
-	r.GET("/items/:id", func(c *gin.Context) { c.Status(http.StatusOK) })
+	mux := http.NewServeMux()
+	mux.Handle("GET /items/{id}", okHandler)
+	h := Metrics(mux)
 
-	before := testutil.ToFloat64(httpRequests.WithLabelValues("GET", "/items/:id", "200"))
+	before := testutil.ToFloat64(httpRequests.WithLabelValues("GET", "/items/{id}", "200"))
 	for _, id := range []string{"1", "2", "3"} {
-		r.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/items/"+id, nil))
+		h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/items/"+id, nil))
 	}
-	after := testutil.ToFloat64(httpRequests.WithLabelValues("GET", "/items/:id", "200"))
+	after := testutil.ToFloat64(httpRequests.WithLabelValues("GET", "/items/{id}", "200"))
 
 	if after-before != 3 {
 		t.Fatalf("expected 3 requests under one route label, got %v", after-before)
@@ -27,15 +25,28 @@ func TestMetricsLabelsByRouteTemplate(t *testing.T) {
 }
 
 func TestMetricsUnmatchedRoute(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	r := gin.New()
-	r.Use(Metrics())
+	h := Metrics(http.NewServeMux())
 
 	before := testutil.ToFloat64(httpRequests.WithLabelValues("GET", "unmatched", "404"))
-	r.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/nope", nil))
+	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/nope", nil))
 	after := testutil.ToFloat64(httpRequests.WithLabelValues("GET", "unmatched", "404"))
 
 	if after-before != 1 {
 		t.Fatalf("expected unmatched 404 to be counted once, got %v", after-before)
+	}
+}
+
+// The route label must survive middleware that sits between Metrics and the mux.
+func TestMetricsRouteThroughOtherMiddleware(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.Handle("GET /things/{id}", okHandler)
+	h := Metrics(CORS(CORSConfig{})(mux))
+
+	before := testutil.ToFloat64(httpRequests.WithLabelValues("GET", "/things/{id}", "200"))
+	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/things/7", nil))
+	after := testutil.ToFloat64(httpRequests.WithLabelValues("GET", "/things/{id}", "200"))
+
+	if after-before != 1 {
+		t.Fatalf("expected the route template label, got delta %v", after-before)
 	}
 }

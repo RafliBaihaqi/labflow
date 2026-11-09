@@ -2,8 +2,8 @@ package handler
 
 import (
 	"labflow/dto"
-
-	"github.com/gin-gonic/gin"
+	"labflow/httpx"
+	"net/http"
 )
 
 func errResp(status int, code, message string) (int, dto.ErrorResponse) {
@@ -13,8 +13,8 @@ func errResp(status int, code, message string) (int, dto.ErrorResponse) {
 	}
 }
 
-func writeErr(c *gin.Context, status int, code, message string) {
-	c.JSON(status, dto.ErrorResponse{
+func writeErr(w http.ResponseWriter, status int, code, message string) {
+	httpx.WriteJSON(w, status, dto.ErrorResponse{
 		Error:   code,
 		Message: message,
 	})

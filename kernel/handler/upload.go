@@ -5,12 +5,11 @@ import (
 	"errors"
 	"io"
 	"labflow/dto"
+	"labflow/httpx"
 	"labflow/service"
 	"net/http"
 	"path/filepath"
 	"strings"
-
-	"github.com/gin-gonic/gin"
 )
 
 type uploadService interface {
@@ -25,10 +24,10 @@ func NewUploadHandler(svc uploadService) *UploadHandler {
 	return &UploadHandler{svc: svc}
 }
 
-func (h *UploadHandler) UploadSamplePhoto(c *gin.Context) {
-	file, header, err := c.Request.FormFile("file")
+func (h *UploadHandler) UploadSamplePhoto(w http.ResponseWriter, r *http.Request) {
+	file, header, err := r.FormFile("file")
 	if err != nil {
-		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: "bad_request", Message: "file is required"})
+		httpx.WriteJSON(w, http.StatusBadRequest, dto.ErrorResponse{Error: "bad_request", Message: "file is required"})
 		return
 	}
 	defer file.Close()
@@ -38,23 +37,23 @@ func (h *UploadHandler) UploadSamplePhoto(c *gin.Context) {
 		ext = "jpg"
 	}
 
-	objectName, err := h.svc.Upload(c.Request.Context(), service.DestinationReservation, file, header.Size, header.Header.Get("Content-Type"), ext)
+	objectName, err := h.svc.Upload(r.Context(), service.DestinationReservation, file, header.Size, header.Header.Get("Content-Type"), ext)
 	if err != nil {
 		status, body := mapUploadError(err)
-		c.JSON(status, body)
+		httpx.WriteJSON(w, status, body)
 		return
 	}
 
-	c.JSON(http.StatusOK, dto.UploadResponse{
+	httpx.WriteJSON(w, http.StatusOK, dto.UploadResponse{
 		Message:    "File uploaded successfully",
 		ObjectName: objectName,
 	})
 }
 
-func (h *UploadHandler) UploadCertificate(c *gin.Context) {
-	file, header, err := c.Request.FormFile("file")
+func (h *UploadHandler) UploadCertificate(w http.ResponseWriter, r *http.Request) {
+	file, header, err := r.FormFile("file")
 	if err != nil {
-		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: "bad_request", Message: "file is required"})
+		httpx.WriteJSON(w, http.StatusBadRequest, dto.ErrorResponse{Error: "bad_request", Message: "file is required"})
 		return
 	}
 	defer file.Close()
@@ -64,23 +63,23 @@ func (h *UploadHandler) UploadCertificate(c *gin.Context) {
 		ext = "pdf"
 	}
 
-	objectName, err := h.svc.Upload(c.Request.Context(), service.DestinationCertificate, file, header.Size, header.Header.Get("Content-Type"), ext)
+	objectName, err := h.svc.Upload(r.Context(), service.DestinationCertificate, file, header.Size, header.Header.Get("Content-Type"), ext)
 	if err != nil {
 		status, body := mapUploadError(err)
-		c.JSON(status, body)
+		httpx.WriteJSON(w, status, body)
 		return
 	}
 
-	c.JSON(http.StatusOK, dto.UploadResponse{
+	httpx.WriteJSON(w, http.StatusOK, dto.UploadResponse{
 		Message:    "File uploaded successfully",
 		ObjectName: objectName,
 	})
 }
 
-func (h *UploadHandler) UploadUserAvatar(c *gin.Context) {
-	file, header, err := c.Request.FormFile("file")
+func (h *UploadHandler) UploadUserAvatar(w http.ResponseWriter, r *http.Request) {
+	file, header, err := r.FormFile("file")
 	if err != nil {
-		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: "bad_request", Message: "file is required"})
+		httpx.WriteJSON(w, http.StatusBadRequest, dto.ErrorResponse{Error: "bad_request", Message: "file is required"})
 		return
 	}
 	defer file.Close()
@@ -90,14 +89,14 @@ func (h *UploadHandler) UploadUserAvatar(c *gin.Context) {
 		ext = "jpg"
 	}
 
-	objectName, err := h.svc.Upload(c.Request.Context(), service.DestinationUser, file, header.Size, header.Header.Get("Content-Type"), ext)
+	objectName, err := h.svc.Upload(r.Context(), service.DestinationUser, file, header.Size, header.Header.Get("Content-Type"), ext)
 	if err != nil {
 		status, body := mapUploadError(err)
-		c.JSON(status, body)
+		httpx.WriteJSON(w, status, body)
 		return
 	}
 
-	c.JSON(http.StatusOK, dto.UploadResponse{
+	httpx.WriteJSON(w, http.StatusOK, dto.UploadResponse{
 		Message:    "File uploaded successfully",
 		ObjectName: objectName,
 	})

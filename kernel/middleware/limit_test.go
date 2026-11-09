@@ -4,13 +4,13 @@ import (
 	"context"
 	"fmt"
 	"labflow/bootstrap"
+	"labflow/httpx"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
 	"testing"
 	"time"
 
-	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
 	"github.com/redis/go-redis/v9"
 )
@@ -62,16 +62,11 @@ func TestRateLimiterIPChecking(t *testing.T) {
 		redisClient.Del(ctx, "rate_limit:test:ip:127.0.0.1")
 	})
 
-	gin.SetMode(gin.TestMode)
-	r := gin.New()
-	r.Use(RateLimiter(redisClient, RateLimitConfig{
+	r := httpx.Chain(okHandler, RateLimiter(redisClient, RateLimitConfig{
 		Namespace: "test",
 		Limit:     2,
 		Window:    time.Second * 10,
 	}))
-	r.GET("/test", func(c *gin.Context) {
-		c.String(http.StatusOK, "OK")
-	})
 
 	// Request 1: Should be allowed (remaining = 1)
 	w1 := httptest.NewRecorder()
@@ -148,22 +143,12 @@ func TestRateLimiterAuthenticatedUser(t *testing.T) {
 		redisClient.Del(ctx, "rate_limit:test:user:42")
 	})
 
-	gin.SetMode(gin.TestMode)
-	r := gin.New()
-
-	// Mock authentication middleware setting "id" to 42
-	r.Use(func(c *gin.Context) {
-		c.Set("id", 42)
-		c.Next()
-	})
-	r.Use(RateLimiter(redisClient, RateLimitConfig{
+	// Authenticated as user 42, as the JWT middleware would do.
+	r := httpx.Chain(okHandler, asUser(42), RateLimiter(redisClient, RateLimitConfig{
 		Namespace: "test",
 		Limit:     1,
 		Window:    time.Second * 10,
 	}))
-	r.GET("/api/resource", func(c *gin.Context) {
-		c.String(http.StatusOK, "OK")
-	})
 
 	// Request 1: Allowed
 	w1 := httptest.NewRecorder()
@@ -188,7 +173,9 @@ func TestRateLimiterAuthenticatedUser(t *testing.T) {
 	}
 }
 
-func TestRateLimiterAuthenticatedUserDifferentTypes(t *testing.T) {
+// The user ID in the context is a typed int, so the limiter no longer needs to
+// handle int64, float64 or string IDs. A zero ID is not a real user: key by IP.
+func TestRateLimiterZeroUserFallsBackToIP(t *testing.T) {
 	_ = godotenv.Load("../.env")
 	bootstrap.LoadEnvVariables()
 
@@ -210,56 +197,29 @@ func TestRateLimiterAuthenticatedUserDifferentTypes(t *testing.T) {
 	defer redisClient.Close()
 
 	ctx := context.Background()
+	key := "rate_limit:test:ip:127.0.0.1"
+	redisClient.Del(ctx, key)
+	t.Cleanup(func() {
+		redisClient.Del(ctx, key)
+	})
 
-	tests := []struct {
-		name        string
-		userID      interface{}
-		expectedKey string
-	}{
-		{name: "Int64 ID", userID: int64(100), expectedKey: "rate_limit:test:user:100"},
-		{name: "Float64 ID", userID: float64(200.0), expectedKey: "rate_limit:test:user:200"},
-		{name: "String ID", userID: "custom-user-uuid", expectedKey: "rate_limit:test:user:custom-user-uuid"},
-		{name: "Zero Int ID fallback to IP", userID: 0, expectedKey: "rate_limit:test:ip:127.0.0.1"},
-		{name: "Empty String ID fallback to IP", userID: "", expectedKey: "rate_limit:test:ip:127.0.0.1"},
+	r := httpx.Chain(okHandler, asUser(0), RateLimiter(redisClient, RateLimitConfig{
+		Namespace: "test",
+		Limit:     1,
+		Window:    time.Second * 10,
+	}))
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/api/resource", nil)
+	req.RemoteAddr = "127.0.0.1:1234"
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("Expected status OK, got %v", w.Code)
 	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			redisClient.Del(ctx, tt.expectedKey)
-			t.Cleanup(func() {
-				redisClient.Del(ctx, tt.expectedKey)
-			})
-
-			gin.SetMode(gin.TestMode)
-			r := gin.New()
-
-			r.Use(func(c *gin.Context) {
-				c.Set("id", tt.userID)
-				c.Next()
-			})
-			r.Use(RateLimiter(redisClient, RateLimitConfig{
-				Namespace: "test",
-				Limit:     1,
-				Window:    time.Second * 10,
-			}))
-			r.GET("/api/resource", func(c *gin.Context) {
-				c.String(http.StatusOK, "OK")
-			})
-
-			w := httptest.NewRecorder()
-			req, _ := http.NewRequest("GET", "/api/resource", nil)
-			req.RemoteAddr = "127.0.0.1:1234"
-			r.ServeHTTP(w, req)
-
-			if w.Code != http.StatusOK {
-				t.Errorf("Expected status OK, got %v", w.Code)
-			}
-
-			exists, err := redisClient.Exists(ctx, tt.expectedKey).Result()
-			if err != nil || exists == 0 {
-				t.Errorf("Expected Redis key %s to exist", tt.expectedKey)
-			}
-		})
+	exists, err := redisClient.Exists(ctx, key).Result()
+	if err != nil || exists == 0 {
+		t.Errorf("Expected Redis key %s to exist", key)
 	}
 }
 
@@ -292,23 +252,19 @@ func TestRateLimiterNamespaceIsolation(t *testing.T) {
 		redisClient.Del(ctx, keyA, keyB)
 	})
 
-	gin.SetMode(gin.TestMode)
-	r := gin.New()
-
 	// Simulate two limiters with different namespaces sharing the same IP
-	r.Use(RateLimiter(redisClient, RateLimitConfig{
-		Namespace: "global",
-		Limit:     1,
-		Window:    time.Second * 10,
-	}))
-	r.Use(RateLimiter(redisClient, RateLimitConfig{
-		Namespace: "auth",
-		Limit:     1,
-		Window:    time.Second * 10,
-	}))
-	r.GET("/test", func(c *gin.Context) {
-		c.String(http.StatusOK, "OK")
-	})
+	r := httpx.Chain(okHandler,
+		RateLimiter(redisClient, RateLimitConfig{
+			Namespace: "global",
+			Limit:     1,
+			Window:    time.Second * 10,
+		}),
+		RateLimiter(redisClient, RateLimitConfig{
+			Namespace: "auth",
+			Limit:     1,
+			Window:    time.Second * 10,
+		}),
+	)
 
 	// Request 1: both limiters allow — consumes 1 slot in each namespace key
 	w1 := httptest.NewRecorder()
@@ -336,5 +292,19 @@ func TestRateLimiterNamespaceIsolation(t *testing.T) {
 	}
 	if existsB == 0 {
 		t.Errorf("Expected Redis key %s to exist", keyB)
+	}
+}
+
+var okHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte("OK"))
+})
+
+// asUser stands in for the JWT middleware: it marks the request as authenticated.
+func asUser(id int) httpx.Middleware {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			next.ServeHTTP(w, r.WithContext(httpx.WithUserID(r.Context(), id)))
+		})
 	}
 }

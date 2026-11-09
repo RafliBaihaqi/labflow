@@ -4,12 +4,12 @@ import (
 	"errors"
 	"labflow/apperr"
 	"labflow/dto"
+	"labflow/httpx"
 	"labflow/models"
 	"labflow/service"
 	"net/http"
 	"strconv"
 
-	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 )
 
@@ -21,50 +21,50 @@ func NewTestListHandler(tlsvc *service.TestListService) *TestListHandler {
 	return &TestListHandler{tlsvc: tlsvc}
 }
 
-func (tlh *TestListHandler) GetTestListByCategory(c *gin.Context) {
-	categoryID := c.Param("categoryid")
+func (tlh *TestListHandler) GetTestListByCategory(w http.ResponseWriter, r *http.Request) {
+	categoryID := r.PathValue("categoryid")
 	catNum, err := strconv.Atoi(categoryID)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: "invalid category id", Message: err.Error()})
+		httpx.WriteJSON(w, http.StatusBadRequest, dto.ErrorResponse{Error: "invalid category id", Message: err.Error()})
 		return
 	}
-	results, err := tlh.tlsvc.GetTestListByCategory(c.Request.Context(), catNum)
+	results, err := tlh.tlsvc.GetTestListByCategory(r.Context(), catNum)
 	if err != nil {
 		status, body := mapTestListError(err)
-		c.JSON(status, body)
+		httpx.WriteJSON(w, status, body)
 		return
 	}
 
 	resp := make([]dto.TestCatalogResponse, 0, len(results))
-	for _, r := range results {
+	for _, entry := range results {
 		resp = append(resp, dto.TestCatalogResponse{
-			ID:       r.ID,
-			Name:     r.Name,
-			Category: r.Category,
+			ID:       entry.ID,
+			Name:     entry.Name,
+			Category: entry.Category,
 		})
 	}
 
-	c.JSON(http.StatusOK, resp)
+	httpx.WriteJSON(w, http.StatusOK, resp)
 }
 
-func (tlh *TestListHandler) ListTestLists(c *gin.Context) {
-	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
-	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "10"))
-	search := c.Query("search")
+func (tlh *TestListHandler) ListTestLists(w http.ResponseWriter, r *http.Request) {
+	page, _ := strconv.Atoi(httpx.QueryDefault(r, "page", "1"))
+	limit, _ := strconv.Atoi(httpx.QueryDefault(r, "limit", "10"))
+	search := r.URL.Query().Get("search")
 	var categoryID *int
-	if raw := c.Query("category_id"); raw != "" {
+	if raw := r.URL.Query().Get("category_id"); raw != "" {
 		parsed, err := strconv.Atoi(raw)
 		if err != nil {
-			c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: "invalid category id", Message: err.Error()})
+			httpx.WriteJSON(w, http.StatusBadRequest, dto.ErrorResponse{Error: "invalid category id", Message: err.Error()})
 			return
 		}
 		categoryID = &parsed
 	}
 
-	resp, err := tlh.tlsvc.ListTestLists(c.Request.Context(), search, categoryID, page, limit)
+	resp, err := tlh.tlsvc.ListTestLists(r.Context(), search, categoryID, page, limit)
 	if err != nil {
 		status, body := mapTestListAdminError(err)
-		c.JSON(status, body)
+		httpx.WriteJSON(w, status, body)
 		return
 	}
 
@@ -73,7 +73,7 @@ func (tlh *TestListHandler) ListTestLists(c *gin.Context) {
 		data = append(data, toTestListResponse(&item))
 	}
 
-	c.JSON(http.StatusOK, dto.PaginatedTestListResponse{
+	httpx.WriteJSON(w, http.StatusOK, dto.PaginatedTestListResponse{
 		Data:       data,
 		Total:      resp.Total,
 		Page:       resp.Page,
@@ -82,58 +82,58 @@ func (tlh *TestListHandler) ListTestLists(c *gin.Context) {
 	})
 }
 
-func (tlh *TestListHandler) CreateTestList(c *gin.Context) {
+func (tlh *TestListHandler) CreateTestList(w http.ResponseWriter, r *http.Request) {
 	var req dto.TestListInput
-	if err := dto.BindStrictJSON(c, &req); err != nil {
-		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: "invalid request", Message: err.Error()})
+	if err := dto.BindStrictJSON(r, &req); err != nil {
+		httpx.WriteJSON(w, http.StatusBadRequest, dto.ErrorResponse{Error: "invalid request", Message: err.Error()})
 		return
 	}
 
-	item, err := tlh.tlsvc.CreateTestList(c.Request.Context(), serviceToModelTestList(req))
+	item, err := tlh.tlsvc.CreateTestList(r.Context(), serviceToModelTestList(req))
 	if err != nil {
 		status, body := mapTestListAdminError(err)
-		c.JSON(status, body)
+		httpx.WriteJSON(w, status, body)
 		return
 	}
 
-	c.JSON(http.StatusCreated, toTestListResponse(item))
+	httpx.WriteJSON(w, http.StatusCreated, toTestListResponse(item))
 }
 
-func (tlh *TestListHandler) UpdateTestList(c *gin.Context) {
-	xid, err := uuid.Parse(c.Param("xid"))
+func (tlh *TestListHandler) UpdateTestList(w http.ResponseWriter, r *http.Request) {
+	xid, err := uuid.Parse(r.PathValue("xid"))
 	if err != nil {
-		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: "invalid xid", Message: err.Error()})
+		httpx.WriteJSON(w, http.StatusBadRequest, dto.ErrorResponse{Error: "invalid xid", Message: err.Error()})
 		return
 	}
 	var req dto.TestListInput
-	if err := dto.BindStrictJSON(c, &req); err != nil {
-		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: "invalid request", Message: err.Error()})
+	if err := dto.BindStrictJSON(r, &req); err != nil {
+		httpx.WriteJSON(w, http.StatusBadRequest, dto.ErrorResponse{Error: "invalid request", Message: err.Error()})
 		return
 	}
 
-	item, err := tlh.tlsvc.UpdateTestList(c.Request.Context(), xid, serviceToModelTestList(req))
+	item, err := tlh.tlsvc.UpdateTestList(r.Context(), xid, serviceToModelTestList(req))
 	if err != nil {
 		status, body := mapTestListAdminError(err)
-		c.JSON(status, body)
+		httpx.WriteJSON(w, status, body)
 		return
 	}
 
-	c.JSON(http.StatusOK, toTestListResponse(item))
+	httpx.WriteJSON(w, http.StatusOK, toTestListResponse(item))
 }
 
-func (tlh *TestListHandler) DeactivateTestList(c *gin.Context) {
-	xid, err := uuid.Parse(c.Param("xid"))
+func (tlh *TestListHandler) DeactivateTestList(w http.ResponseWriter, r *http.Request) {
+	xid, err := uuid.Parse(r.PathValue("xid"))
 	if err != nil {
-		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: "invalid xid", Message: err.Error()})
+		httpx.WriteJSON(w, http.StatusBadRequest, dto.ErrorResponse{Error: "invalid xid", Message: err.Error()})
 		return
 	}
-	item, err := tlh.tlsvc.DeactivateTestList(c.Request.Context(), xid)
+	item, err := tlh.tlsvc.DeactivateTestList(r.Context(), xid)
 	if err != nil {
 		status, body := mapTestListAdminError(err)
-		c.JSON(status, body)
+		httpx.WriteJSON(w, status, body)
 		return
 	}
-	c.JSON(http.StatusOK, toTestListResponse(item))
+	httpx.WriteJSON(w, http.StatusOK, toTestListResponse(item))
 }
 
 func serviceToModelTestList(req dto.TestListInput) models.TestList {

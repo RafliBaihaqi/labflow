@@ -4,50 +4,42 @@ import (
 	"labflow/auth"
 	"labflow/bootstrap"
 	"labflow/handler"
+	"labflow/httpx"
 	"labflow/mail"
 	"labflow/middleware"
 	"labflow/queue"
 	"labflow/repo"
 	"labflow/service"
+	"log"
+	"net/http"
+	"os"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/service/s3"
-	"github.com/gin-contrib/cors"
-	"github.com/gin-contrib/sessions"
-	"github.com/gin-contrib/sessions/cookie"
-	"github.com/gin-gonic/gin"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/redis/go-redis/v9"
 	"gorm.io/gorm"
 )
 
 func Serve(cookieKey string, db *gorm.DB, redisClient *redis.Client, mailer *mail.Sender, enqueuer *queue.Enqueuer, s3client *s3.Client) {
-	gin.SetMode(gin.ReleaseMode)
-	ginServer := gin.Default()
-	ginServer.Use(middleware.Metrics())
+	addr := ":8080"
+	if port := os.Getenv("PORT"); port != "" {
+		addr = ":" + port
+	}
+	srv := &http.Server{
+		Addr:              addr,
+		Handler:           NewHandler(cookieKey, db, redisClient, enqueuer, s3client),
+		ReadHeaderTimeout: 10 * time.Second,
+	}
+	log.Printf("listening on %s", addr)
+	if err := srv.ListenAndServe(); err != nil {
+		log.Printf("server stopped: %v", err)
+	}
+}
 
-	sessionStore := cookie.NewStore([]byte(cookieKey))
-	sessionStore.Options(sessions.Options{
-		Path:     "/",
-		Secure:   false,
-		HttpOnly: true,
-	})
-	ginServer.Use(sessions.Sessions("labflow-session", sessionStore))
-	ginServer.Use(cors.New(cors.Config{
-		AllowOrigins:     []string{"http://localhost:5173", "http://localhost:3000"},
-		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "PATCH"},
-		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization"},
-		ExposeHeaders:    []string{"Content-Length"},
-		AllowCredentials: true,
-		MaxAge:           12 * time.Hour,
-	}))
-	// Global safety limiter (IP-based, 100 requests per minute)
-	ginServer.Use(middleware.RateLimiter(redisClient, middleware.RateLimitConfig{
-		Namespace: "global",
-		Limit:     100,
-		Window:    time.Minute,
-	}))
-
+// NewHandler wires repositories, services and handlers into the API's routes
+// and global middleware.
+func NewHandler(cookieKey string, db *gorm.DB, redisClient *redis.Client, enqueuer *queue.Enqueuer, s3client *s3.Client) http.Handler {
 	authRepo := repo.NewAuthRepo(db)
 	reservationRepo := repo.NewReservationRepo(db)
 	testListRepo := repo.NewTestListRepo(db)
@@ -77,88 +69,98 @@ func Serve(cookieKey string, db *gorm.DB, redisClient *redis.Client, mailer *mai
 	quotationHandler := handler.NewQuotationHandler(quotationService)
 	lifecycleHandler := handler.NewLifecycleHandler()
 
-	authentication := ginServer.Group("/auth")
 	// Strict rate limiter for auth (IP-based, 10 requests per minute)
-	authentication.Use(middleware.RateLimiter(redisClient, middleware.RateLimitConfig{
+	authLimiter := middleware.RateLimiter(redisClient, middleware.RateLimitConfig{
 		Namespace: "auth",
 		Limit:     10,
 		Window:    time.Minute,
-	}))
-	{
-		authentication.POST("/register", authHandler.Register)
-		authentication.POST("/login", authHandler.LoginWithCookie)
-		authentication.POST("/logout", authHandler.Logout)
-		authentication.POST("/verify-otp", authHandler.VerifyOtp)
-		authentication.POST("/resend-otp", authHandler.ResendOtp)
-		authentication.POST("/forgot-password", authHandler.ForgotPassword)
-		authentication.POST("/verify-reset-otp", authHandler.VerifyResetOtp)
-		authentication.POST("/reset-password", authHandler.ResetPassword)
-	}
-	ginServer.POST("/api/quotations", quotationHandler.CreateQuotation)
-	// Protected routes
-	apiGroup := ginServer.Group("/api")
-	apiGroup.Use(middleware.JWTCookieMiddleware(tokenUtil))
+	})
 	// User/IP-aware API rate limiter (60 requests per minute)
-	apiGroup.Use(middleware.RateLimiter(redisClient, middleware.RateLimitConfig{
+	apiLimiter := middleware.RateLimiter(redisClient, middleware.RateLimitConfig{
 		Namespace: "api",
 		Limit:     60,
 		Window:    time.Minute,
-	}))
-	{
-		quotations := apiGroup.Group("/quotations")
-		{
-			quotations.GET("", middleware.RBACMiddleware(accessService, "read_quotation"), quotationHandler.ListQuotations)
-			quotations.PATCH("/:xid", middleware.RBACMiddleware(accessService, "update_quotation"), quotationHandler.UpdateQuotationStatus)
-		}
+	})
+	jwt := middleware.JWTCookieMiddleware(tokenUtil)
 
-		reservations := apiGroup.Group("/reservations")
-		{
-			reservations.POST("", middleware.RBACMiddleware(accessService, "create_reservation"), reservationHandler.CreateReservation)
-			reservations.GET("", middleware.RBACMiddleware(accessService, "read_reservation"), reservationHandler.ListReservations)
-			reservations.GET("/stats", middleware.RBACMiddleware(accessService, "read_reservation"), reservationHandler.GetReservationStats)
-			reservations.PATCH("/:xid", middleware.RBACMiddleware(accessService, "update_reservation"), reservationHandler.UpdateReservationsByXid)
-			reservations.GET("/:xid", middleware.RBACMiddleware(accessService, "read_reservation"), reservationHandler.GetReservationByXid)
-			reservations.PUT("/:xid/status", middleware.RBACMiddleware(accessService, "update_reservation_status"), reservationHandler.UpdateReservationStatus)
-		}
-
-		tests := apiGroup.Group("/tests")
-		{
-			tests.GET("/catalog/:categoryid", middleware.RBACMiddleware(accessService, "read_test"), testlisthandler.GetTestListByCategory)
-			tests.PATCH("/:xid", middleware.RBACMiddleware(accessService, "update_test"), testHandler.UpdateTestByXid)
-
-		}
-		testLists := apiGroup.Group("/test-lists")
-		{
-			testLists.GET("", middleware.RBACMiddleware(accessService, "read_test"), testlisthandler.ListTestLists)
-			testLists.POST("", middleware.RBACMiddleware(accessService, "create_test"), testlisthandler.CreateTestList)
-			testLists.PUT("/:xid", middleware.RBACMiddleware(accessService, "update_test"), testlisthandler.UpdateTestList)
-			testLists.DELETE("/:xid", middleware.RBACMiddleware(accessService, "delete_test"), testlisthandler.DeactivateTestList)
-		}
-		apiGroup.GET("/auth/me", authHandler.GetMe)
-		apiGroup.GET("/lifecycle/transitions", middleware.RBACMiddleware(accessService, "read_lifecycle"), lifecycleHandler.GetTransitions)
-		files := apiGroup.Group("/files")
-		{
-			files.GET("/reservations/:object", middleware.RBACMiddleware(accessService, "read_reservation"), fileHandler.ServeReservationFile)
-			files.GET("/users/:object", fileHandler.ServeUserFile)
-			files.GET("/certificates/:object", middleware.RBACMiddleware(accessService, "read_certificate"), fileHandler.ServeCertificateFile)
-		}
-
-		apiGroup.POST("/uploads/reservation", middleware.RBACMiddleware(accessService, "update_reservation_status"), uploadHandler.UploadSamplePhoto)
-		apiGroup.POST("/uploads/certificate", middleware.RBACMiddleware(accessService, "create_certificate"), uploadHandler.UploadCertificate)
-		apiGroup.POST("/uploads/user", middleware.RBACMiddleware(accessService, "update_user_avatar"), uploadHandler.UploadUserAvatar)
-
-		apiGroup.PATCH("/users/:xid", middleware.RBACMiddleware(accessService, "update_user"), userHandler.UpdateUser)
+	mux := http.NewServeMux()
+	// authRoute: rate limited by IP, no session required.
+	authRoute := func(pattern string, h http.HandlerFunc) {
+		mux.Handle(pattern, httpx.Chain(h, authLimiter))
+	}
+	// protected: requires a valid session cookie.
+	protected := func(pattern string, h http.HandlerFunc) {
+		mux.Handle(pattern, httpx.Chain(h, jwt, apiLimiter))
+	}
+	// requires: a valid session cookie and the named permission.
+	requires := func(permission, pattern string, h http.HandlerFunc) {
+		mux.Handle(pattern, httpx.Chain(h, jwt, apiLimiter, middleware.RBACMiddleware(accessService, permission)))
 	}
 
-	healthHandler := func(c *gin.Context) {
-		c.JSON(200, gin.H{"status": "ok"})
-	}
-	ginServer.GET("/metrics", gin.WrapH(promhttp.Handler()))
-	ginServer.GET("/health", healthHandler)
-	ginServer.HEAD("/health", healthHandler)
+	authRoute("POST /auth/register", authHandler.Register)
+	authRoute("POST /auth/login", authHandler.LoginWithCookie)
+	authRoute("POST /auth/logout", authHandler.Logout)
+	authRoute("POST /auth/verify-otp", authHandler.VerifyOtp)
+	authRoute("POST /auth/resend-otp", authHandler.ResendOtp)
+	authRoute("POST /auth/forgot-password", authHandler.ForgotPassword)
+	authRoute("POST /auth/verify-reset-otp", authHandler.VerifyResetOtp)
+	authRoute("POST /auth/reset-password", authHandler.ResetPassword)
 
-	err := ginServer.Run()
-	if err != nil {
-		return
-	}
+	mux.HandleFunc("POST /api/quotations", quotationHandler.CreateQuotation)
+	requires("read_quotation", "GET /api/quotations", quotationHandler.ListQuotations)
+	requires("update_quotation", "PATCH /api/quotations/{xid}", quotationHandler.UpdateQuotationStatus)
+
+	requires("create_reservation", "POST /api/reservations", reservationHandler.CreateReservation)
+	requires("read_reservation", "GET /api/reservations", reservationHandler.ListReservations)
+	requires("read_reservation", "GET /api/reservations/stats", reservationHandler.GetReservationStats)
+	requires("update_reservation", "PATCH /api/reservations/{xid}", reservationHandler.UpdateReservationsByXid)
+	requires("read_reservation", "GET /api/reservations/{xid}", reservationHandler.GetReservationByXid)
+	requires("update_reservation_status", "PUT /api/reservations/{xid}/status", reservationHandler.UpdateReservationStatus)
+
+	requires("read_test", "GET /api/tests/catalog/{categoryid}", testlisthandler.GetTestListByCategory)
+	requires("update_test", "PATCH /api/tests/{xid}", testHandler.UpdateTestByXid)
+
+	requires("read_test", "GET /api/test-lists", testlisthandler.ListTestLists)
+	requires("create_test", "POST /api/test-lists", testlisthandler.CreateTestList)
+	requires("update_test", "PUT /api/test-lists/{xid}", testlisthandler.UpdateTestList)
+	requires("delete_test", "DELETE /api/test-lists/{xid}", testlisthandler.DeactivateTestList)
+
+	protected("GET /api/auth/me", authHandler.GetMe)
+	requires("read_lifecycle", "GET /api/lifecycle/transitions", lifecycleHandler.GetTransitions)
+
+	requires("read_reservation", "GET /api/files/reservations/{object}", fileHandler.ServeReservationFile)
+	protected("GET /api/files/users/{object}", fileHandler.ServeUserFile)
+	requires("read_certificate", "GET /api/files/certificates/{object}", fileHandler.ServeCertificateFile)
+
+	requires("update_reservation_status", "POST /api/uploads/reservation", uploadHandler.UploadSamplePhoto)
+	requires("create_certificate", "POST /api/uploads/certificate", uploadHandler.UploadCertificate)
+	requires("update_user_avatar", "POST /api/uploads/user", uploadHandler.UploadUserAvatar)
+
+	requires("update_user", "PATCH /api/users/{xid}", userHandler.UpdateUser)
+
+	mux.Handle("GET /metrics", promhttp.Handler())
+	// GET patterns also match HEAD requests.
+	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
+		httpx.WriteJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	})
+
+	return httpx.Chain(mux,
+		middleware.AccessLog(os.Stdout),
+		middleware.Recover,
+		middleware.Metrics,
+		middleware.CORS(middleware.CORSConfig{
+			AllowOrigins:     []string{"http://localhost:5173", "http://localhost:3000"},
+			AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "PATCH"},
+			AllowHeaders:     []string{"Origin", "Content-Type", "Authorization"},
+			ExposeHeaders:    []string{"Content-Length"},
+			AllowCredentials: true,
+			MaxAge:           12 * time.Hour,
+		}),
+		// Global safety limiter (IP-based, 100 requests per minute)
+		middleware.RateLimiter(redisClient, middleware.RateLimitConfig{
+			Namespace: "global",
+			Limit:     100,
+			Window:    time.Minute,
+		}),
+	)
 }
