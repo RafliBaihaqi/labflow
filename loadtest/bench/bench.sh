@@ -108,7 +108,7 @@ for round in $(seq 1 "$ROUNDS"); do
     log "round $round/$ROUNDS: $label"
 
     docker exec "${PROJECT}-postgres-1" psql -q -U labflow -d labflow \
-      -c 'DROP SCHEMA public CASCADE; CREATE SCHEMA public;' >/dev/null
+      -c 'SET client_min_messages TO warning; DROP SCHEMA public CASCADE; CREATE SCHEMA public;' >/dev/null
     docker exec "${PROJECT}-redis-1" redis-cli FLUSHALL >/dev/null
     docker run --rm --network "$NET" "${API_ENV[@]}" "$image" seed >"$prefix-seed.log" 2>&1
 
