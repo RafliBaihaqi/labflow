@@ -6,7 +6,7 @@
 round in which the machine itself was disturbed. Excluded rounds are named in
 the output so the numbers stay traceable.
 
-Writes summary.json and summary.md next to the raw results.
+Writes summary.json and summary.txt next to the raw results.
 """
 
 import json
@@ -105,7 +105,7 @@ def main(run_dir, exclude=()):
     for title, key in (("Binary size (MB)", "binary_bytes"), ("Image size (MB)", "image_bytes")):
         lines.append(f"| {title} | " + " | ".join(
             f"{summary['variants'][label][key] / 1e6:.1f}" for label in labels) + " |")
-    (run_dir / "summary.md").write_text("\n".join(lines) + "\n")
+    (run_dir / "summary.txt").write_text("\n".join(lines) + "\n")
     print("\n".join(lines))
 
 

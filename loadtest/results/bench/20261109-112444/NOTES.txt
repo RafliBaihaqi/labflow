@@ -2,7 +2,7 @@ Run behind blog post 2 (Gin + GORM vs net/http + sqlc), 2026-11-09.
 
   bench.sh -w 1 -r 4 -R 60 -d 2m gin-gorm=main nethttp-gorm=refactor/net-http nethttp-sqlc=refactor/sqlc
 
-Round r1 is excluded from summary.md (summarize.py --exclude r1). During r1
+Round r1 is excluded from summary.txt (summarize.py --exclude r1). During r1
 every build was disturbed in the same way: none reached the offered load
 (197-205 req/s instead of 220), browse p95 was 4-6 s for all three, and API
 CPU sat at ~140% for all three. Rounds r2-r4 reached 220 req/s with 0% errors

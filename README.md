@@ -167,7 +167,7 @@ with the API limited to 2 CPUs and 512 MB.
 | Third-party Go packages | 321 | 252 | 239 |
 | Binary (stripped) | 45.5 MB | 34.7 MB | 33.1 MB |
 
-*[Summary and raw rounds](loadtest/results/bench/20261109-112444/summary.md);
+*[Summary and raw rounds](loadtest/results/bench/20261109-112444/summary.txt);
 round r1 is excluded for every build because the host itself was disturbed
 ([notes](loadtest/results/bench/20261109-112444/NOTES.txt)).*
 
