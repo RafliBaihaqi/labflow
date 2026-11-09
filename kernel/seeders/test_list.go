@@ -1,16 +1,17 @@
 package seeders
 
 import (
+	"context"
 	"labflow/models"
+	"labflow/sqlc"
 	"log"
 
 	"github.com/google/uuid"
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-func SeedTestList(g *gorm.DB) {
-	db := g
+func SeedTestList(ctx context.Context, pool *pgxpool.Pool) {
+	q := sqlc.New(pool)
 	tests := []models.TestList{
 		{XID: uuid.New(), CategoryID: 1, Value: "Total Aerobic Microbial Count", Label: "Total Aerobic Microbial Count"},
 		{XID: uuid.New(), CategoryID: 1, Value: "Total Yeast and Mold Count", Label: "Total Yeast and Mold Count"},
@@ -30,7 +31,9 @@ func SeedTestList(g *gorm.DB) {
 		{XID: uuid.New(), CategoryID: 2, Value: "Residual Solvents", Label: "Residual Solvents"},
 		{XID: uuid.New(), CategoryID: 2, Value: "Water Content", Label: "Water Content"},
 	}
-	if err := db.Clauses(clause.OnConflict{DoNothing: true}).Create(&tests).Error; err != nil {
-		log.Fatalf("Failed to seed test list data: %v", err)
+	for _, t := range tests {
+		if err := q.SeedTestList(ctx, sqlc.SeedTestListParams{Xid: t.XID, CategoryID: t.CategoryID, Value: t.Value, Label: t.Label}); err != nil {
+			log.Fatalf("Failed to seed test list data: %v", err)
+		}
 	}
 }

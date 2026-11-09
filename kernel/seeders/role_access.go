@@ -1,13 +1,13 @@
 package seeders
 
 import (
+	"context"
 	"log"
 
-	"gorm.io/gorm"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-func SeedRoleAccess(g *gorm.DB) {
-	db := g
+func SeedRoleAccess(ctx context.Context, pool *pgxpool.Pool) {
 	// Join table — raw insert is pragmatic for many-to-many links
 	// admin gets all, customer limited, qa + lab roles expanded per OLD_APP_REFERENCE sidebar matrix
 	query := `INSERT INTO role_accesses (role_id, access_id) VALUES
@@ -30,7 +30,7 @@ func SeedRoleAccess(g *gorm.DB) {
 		-- mr (9)
 		(9, 6), (9, 10), (9, 14), (9, 17), (9, 2), (9, 18), (9, 25), (9, 28)
 		ON CONFLICT DO NOTHING;`
-	if err := db.Exec(query).Error; err != nil {
+	if _, err := pool.Exec(ctx, query); err != nil {
 		log.Fatalf("Failed to seed role_access data: %v", err)
 	}
 }

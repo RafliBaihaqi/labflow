@@ -1,12 +1,17 @@
 package seeders
 
-import "gorm.io/gorm"
+import (
+	"context"
 
-func RunSeeders(db *gorm.DB) {
-	SeedAccess(db)
-	SeedRole(db)
-	SeedRoleAccess(db)
-	SeedUser(db)
-	SeedCategory(db)
-	SeedTestList(db)
+	"github.com/jackc/pgx/v5/pgxpool"
+)
+
+func RunSeeders(db *pgxpool.Pool) {
+	ctx := context.Background()
+	SeedAccess(ctx, db)
+	SeedRole(ctx, db)
+	SeedRoleAccess(ctx, db)
+	SeedUser(ctx, db)
+	SeedCategory(ctx, db)
+	SeedTestList(ctx, db)
 }

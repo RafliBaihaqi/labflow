@@ -16,12 +16,12 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/redis/go-redis/v9"
-	"gorm.io/gorm"
 )
 
-func Serve(cookieKey string, db *gorm.DB, redisClient *redis.Client, mailer *mail.Sender, enqueuer *queue.Enqueuer, s3client *s3.Client) {
+func Serve(cookieKey string, db *pgxpool.Pool, redisClient *redis.Client, mailer *mail.Sender, enqueuer *queue.Enqueuer, s3client *s3.Client) {
 	addr := ":8080"
 	if port := os.Getenv("PORT"); port != "" {
 		addr = ":" + port
@@ -39,7 +39,7 @@ func Serve(cookieKey string, db *gorm.DB, redisClient *redis.Client, mailer *mai
 
 // NewHandler wires repositories, services and handlers into the API's routes
 // and global middleware.
-func NewHandler(cookieKey string, db *gorm.DB, redisClient *redis.Client, enqueuer *queue.Enqueuer, s3client *s3.Client) http.Handler {
+func NewHandler(cookieKey string, db *pgxpool.Pool, redisClient *redis.Client, enqueuer *queue.Enqueuer, s3client *s3.Client) http.Handler {
 	authRepo := repo.NewAuthRepo(db)
 	reservationRepo := repo.NewReservationRepo(db)
 	testListRepo := repo.NewTestListRepo(db)
