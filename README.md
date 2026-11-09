@@ -125,9 +125,10 @@ Three separate problems stacked up:
    the Grafana screenshot that's the in-flight spike to ~1,000 and 2.3k
    goroutines. **Fix:** cap the pool (`DB_MAX_OPEN_CONNS`, default 25) so
    requests queue briefly in Go instead of failing in Postgres.
-2. **A permission check on every request cost 3 queries.** The RBAC middleware
+2. **A permission check on every request cost 5 queries.** The RBAC middleware
    re-loaded the user with `Preload("Roles.Accesses")` on every protected
-   call. **Fix:** cache each user's permission set in memory for 30 s
+   call: the user, `user_roles`, `roles`, `role_accesses` and `accesses`
+   (counted with Postgres statement logging). **Fix:** cache each user's permission set in memory for 30 s
    ([`service/access.go`](kernel/service/access.go)). Roles only change
    through admin/seed operations, so a 30 s delay before a change applies is
    an acceptable trade.
