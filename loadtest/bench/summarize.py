@@ -83,7 +83,10 @@ def main(run_dir):
         ("API memory avg (MiB)", "mem_avg_mib", 0), ("API memory max (MiB)", "mem_max_mib", 0),
     ]
     labels = list(summary["variants"])
-    lines = [f"Median of {meta['rounds']} rounds at RATE={meta['rate']}, DURATION={meta['duration']}. "
+    warmup = meta.get("warmup_rounds", 0)
+    lines = [f"Median of {meta['rounds']} rounds"
+             + (f" (after {warmup} unrecorded warm-up round{'s' if warmup != 1 else ''})" if warmup else "")
+             + f" at RATE={meta['rate']}, DURATION={meta['duration']}. "
              f"Host: {meta['host']}. API limited to {meta['api_cpus']} CPUs / {meta['api_memory']}.", "",
              "| Metric | " + " | ".join(labels) + " |", "| --- |" + " ---: |" * len(labels)]
     for title, key, digits in rows:

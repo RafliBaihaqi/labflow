@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 # Compare backend builds under the same k6 load on the same machine.
 #
-#   loadtest/bench/bench.sh [-r rounds] [-R rate] [-d duration] label=git-ref ...
-#   loadtest/bench/bench.sh -r 3 gin-gorm=main nethttp=HEAD
+#   loadtest/bench/bench.sh [-r rounds] [-w warmup-rounds] [-R rate] [-d duration] label=git-ref ...
+#   loadtest/bench/bench.sh -w 1 -r 4 gin-gorm=main nethttp=HEAD
 #
 # Each variant is built from kernel/ at its git ref. Then, for every round and
-# every variant (interleaved, so machine drift affects all variants equally):
+# every variant (interleaved, so machine drift affects all variants equally),
+# after any warm-up rounds, which run the same way but are not summarized:
 #   1. reset Postgres and Redis, then migrate and seed
 #   2. start the backend with fixed CPU and memory limits
 #   3. warm up, then run loadtest/k6/lifecycle.js
@@ -15,11 +16,13 @@
 set -euo pipefail
 
 ROUNDS=3
+WARMUP=0
 RATE=100
 DURATION=2m
-while getopts "r:R:d:" opt; do
+while getopts "r:w:R:d:" opt; do
   case $opt in
     r) ROUNDS=$OPTARG ;;
+    w) WARMUP=$OPTARG ;;
     R) RATE=$OPTARG ;;
     d) DURATION=$OPTARG ;;
     *) exit 2 ;;
@@ -27,7 +30,7 @@ while getopts "r:R:d:" opt; do
 done
 shift $((OPTIND - 1))
 if [ $# -lt 1 ]; then
-  echo "usage: $0 [-r rounds] [-R rate] [-d duration] label=git-ref ..." >&2
+  echo "usage: $0 [-r rounds] [-w warmup-rounds] [-R rate] [-d duration] label=git-ref ..." >&2
   exit 2
 fi
 
@@ -71,7 +74,7 @@ log "starting infrastructure ($PROJECT)"
 LABELS=()
 {
   echo "{"
-  echo "  \"run_id\": \"$RUN_ID\", \"rounds\": $ROUNDS, \"rate\": $RATE, \"duration\": \"$DURATION\","
+  echo "  \"run_id\": \"$RUN_ID\", \"rounds\": $ROUNDS, \"warmup_rounds\": $WARMUP, \"rate\": $RATE, \"duration\": \"$DURATION\","
   echo "  \"api_cpus\": $API_CPUS, \"api_memory\": \"$API_MEMORY\", \"k6_image\": \"$K6_IMAGE\","
   echo "  \"host\": \"$(nproc) threads, $(free -m | awk '/Mem:/ {print $2}') MiB RAM, $(uname -r)\","
   echo "  \"variants\": {"
@@ -101,11 +104,16 @@ run_k6() {
     -e SUMMARY_PATH="$summary" "$K6_IMAGE" run --quiet /loadtest/k6/lifecycle.js
 }
 
-for round in $(seq 1 "$ROUNDS"); do
+# Warm-up rounds are named w<n> so summarize.py ignores them.
+ROUND_IDS=()
+for i in $(seq 1 "$WARMUP"); do ROUND_IDS+=("w$i"); done
+for i in $(seq 1 "$ROUNDS"); do ROUND_IDS+=("r$i"); done
+
+for round in "${ROUND_IDS[@]}"; do
   for label in "${LABELS[@]}"; do
     image=labflow-bench:$label
-    prefix=$OUT/$label-r$round
-    log "round $round/$ROUNDS: $label"
+    prefix=$OUT/$label-$round
+    log "round $round: $label"
 
     docker exec "${PROJECT}-postgres-1" psql -q -U labflow -d labflow \
       -c 'SET client_min_messages TO warning; DROP SCHEMA public CASCADE; CREATE SCHEMA public;' >/dev/null
@@ -129,7 +137,7 @@ for round in $(seq 1 "$ROUNDS"); do
       done
     ) >"$prefix-stats.csv" &
     sampler=$!
-    run_k6 "$RATE" "$DURATION" "/loadtest/results/bench/$RUN_ID/$label-r$round.json" \
+    run_k6 "$RATE" "$DURATION" "/loadtest/results/bench/$RUN_ID/$label-$round.json" \
       >"$prefix-k6.txt" 2>&1 || true
     kill "$sampler" 2>/dev/null || true
     wait "$sampler" 2>/dev/null || true
