@@ -49,7 +49,7 @@ USER appuser
 
 EXPOSE 8080
 
-# Use GET not HEAD -- Gin GET route does not handle HEAD via wget --spider (which sends HEAD)
+# curl sends GET; the wget fallback is kept for images without curl.
 HEALTHCHECK --interval=10s --timeout=10s --start-period=60s --retries=8 \
     CMD curl -f http://localhost:8080/health || wget -qO- http://localhost:8080/health | grep -q ok || exit 1
 

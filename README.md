@@ -4,7 +4,7 @@ An open-source **Laboratory Information Management System (LIMS)**. Customers
 submit test requests, lab staff move each request through a role-guarded
 lifecycle, and finished work is issued as a certificate.
 
-**Go** API (Gin, GORM, Postgres, Redis, asynq) · **React Router 7** SSR
+**Go** API (`net/http`, GORM, Postgres, Redis, asynq) · **React Router 7** SSR
 frontend · **Prometheus + Grafana** observability · **k6** load tests ·
 **Playwright** e2e tests · Docker Compose · GitHub Actions CI.
 
@@ -52,7 +52,7 @@ frontend · **Prometheus + Grafana** observability · **k6** load tests ·
 ```mermaid
 flowchart LR
   B[Browser] --> FE[React Router SSR<br/>app/]
-  FE -->|/api, /auth| API[Go API - Gin<br/>kernel/]
+  FE -->|/api, /auth| API[Go API - net/http<br/>kernel/]
   API --> MW[Middleware<br/>metrics · rate limit · JWT · RBAC]
   MW --> H[handler] --> S[service] --> R[repo]
   R --> PG[(Postgres)]
@@ -71,7 +71,8 @@ database.
 
 ```
 kernel/        Go backend
-  handler/     HTTP handlers (Gin)
+  httpx/       JSON responses, middleware chaining, client IP, request user
+  handler/     HTTP handlers (net/http)
   service/     business logic
   repo/        persistence (GORM)
   middleware/  metrics, rate limiting, JWT, RBAC
@@ -233,7 +234,7 @@ proxy and TLS (see [`deployments/prod/README.md`](deployments/prod/README.md)).
 - **JWT + Redis instead of pure stateless JWT.** It costs one Redis lookup per
   request, which buys real logout and revocation.
 - **Background email queue.** A slow SMTP server can't slow down a signup.
-- **Metrics labelled by route template** (`/api/reservations/:xid`, not the
+- **Metrics labelled by route template** (`/api/reservations/{xid}`, not the
   raw path), so Prometheus label cardinality stays bounded.
 
 ## Roadmap

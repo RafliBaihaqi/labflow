@@ -10,8 +10,6 @@ import (
 	"testing"
 
 	"labflow/service"
-
-	"github.com/gin-gonic/gin"
 )
 
 type fakeFetcher struct {
@@ -29,12 +27,11 @@ func (f *fakeFetcher) GetObject(ctx context.Context, bucket, object string) (*se
 	return f.data, f.err
 }
 
-func newTestRouter(h *FileHandler) *gin.Engine {
-	gin.SetMode(gin.TestMode)
-	r := gin.New()
-	r.GET("/api/files/reservations/:object", h.ServeReservationFile)
-	r.GET("/api/files/users/:object", h.ServeUserFile)
-	r.GET("/api/files/certificates/:object", h.ServeCertificateFile)
+func newTestRouter(h *FileHandler) *http.ServeMux {
+	r := http.NewServeMux()
+	r.HandleFunc("GET /api/files/reservations/{object}", h.ServeReservationFile)
+	r.HandleFunc("GET /api/files/users/{object}", h.ServeUserFile)
+	r.HandleFunc("GET /api/files/certificates/{object}", h.ServeCertificateFile)
 	return r
 }
 

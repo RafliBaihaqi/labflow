@@ -4,10 +4,10 @@ import (
 	"context"
 	"errors"
 	"labflow/dto"
+	"labflow/httpx"
 	"labflow/service"
 	"net/http"
 
-	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 )
 
@@ -23,26 +23,26 @@ func NewUserHandler(svc userService) *UserHandler {
 	return &UserHandler{svc: svc}
 }
 
-func (h *UserHandler) UpdateUser(c *gin.Context) {
-	userID, exists := c.Get("id")
+func (h *UserHandler) UpdateUser(w http.ResponseWriter, r *http.Request) {
+	userID, exists := httpx.UserID(r.Context())
 	if !exists {
-		c.JSON(http.StatusUnauthorized, dto.ErrorResponse{Error: "unauthorized", Message: "user not found"})
+		httpx.WriteJSON(w, http.StatusUnauthorized, dto.ErrorResponse{Error: "unauthorized", Message: "user not found"})
 		return
 	}
 
-	xid, err := uuid.Parse(c.Param("xid"))
+	xid, err := uuid.Parse(r.PathValue("xid"))
 	if err != nil {
-		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: "bad_request", Message: "invalid xid"})
+		httpx.WriteJSON(w, http.StatusBadRequest, dto.ErrorResponse{Error: "bad_request", Message: "invalid xid"})
 		return
 	}
 
 	var req dto.UpdateUserRequest
-	if err := dto.BindStrictJSON(c, &req); err != nil {
-		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: "invalid request", Message: err.Error()})
+	if err := dto.BindStrictJSON(r, &req); err != nil {
+		httpx.WriteJSON(w, http.StatusBadRequest, dto.ErrorResponse{Error: "invalid request", Message: err.Error()})
 		return
 	}
 
-	resp, err := h.svc.UpdateUserByXid(c.Request.Context(), userID.(int), xid, service.UpdateUserParams{
+	resp, err := h.svc.UpdateUserByXid(r.Context(), userID, xid, service.UpdateUserParams{
 		PhoneNumber: req.PhoneNumber,
 		Company:     req.Company,
 		Address:     req.Address,
@@ -50,11 +50,11 @@ func (h *UserHandler) UpdateUser(c *gin.Context) {
 	})
 	if err != nil {
 		status, body := mapUserError(err)
-		c.JSON(status, body)
+		httpx.WriteJSON(w, status, body)
 		return
 	}
 
-	c.JSON(http.StatusOK, dto.UpdateUserResponse{
+	httpx.WriteJSON(w, http.StatusOK, dto.UpdateUserResponse{
 		Xid:         resp.Xid,
 		PhoneNumber: resp.PhoneNumber,
 		Company:     resp.Company,

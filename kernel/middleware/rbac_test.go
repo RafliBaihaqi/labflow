@@ -3,11 +3,10 @@ package middleware
 import (
 	"context"
 	"errors"
+	"labflow/httpx"
 	"net/http"
 	"net/http/httptest"
 	"testing"
-
-	"github.com/gin-gonic/gin"
 )
 
 type stubChecker struct {
@@ -18,7 +17,6 @@ type stubChecker struct {
 func (s stubChecker) HasAccess(context.Context, int, string) (bool, error) { return s.allowed, s.err }
 
 func TestRBACMiddlewareStatus(t *testing.T) {
-	gin.SetMode(gin.TestMode)
 	cases := []struct {
 		name    string
 		checker stubChecker
@@ -30,13 +28,21 @@ func TestRBACMiddlewareStatus(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			r := gin.New()
-			r.GET("/x", func(c *gin.Context) { c.Set("id", 1); c.Next() }, RBACMiddleware(tc.checker, "read"), func(c *gin.Context) { c.Status(http.StatusOK) })
+			h := httpx.Chain(okHandler, asUser(1), RBACMiddleware(tc.checker, "read"))
 			w := httptest.NewRecorder()
-			r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/x", nil))
+			h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/x", nil))
 			if w.Code != tc.want {
 				t.Fatalf("got %d, want %d", w.Code, tc.want)
 			}
 		})
+	}
+}
+
+func TestRBACMiddlewareWithoutUser(t *testing.T) {
+	h := RBACMiddleware(stubChecker{allowed: true}, "read")(okHandler)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/x", nil))
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("got %d, want %d", w.Code, http.StatusUnauthorized)
 	}
 }

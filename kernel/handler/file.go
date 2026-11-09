@@ -3,13 +3,14 @@ package handler
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"labflow/dto"
+	"labflow/httpx"
 	"labflow/service"
-
-	"github.com/gin-gonic/gin"
 )
 
 // fileFetcher is the narrow dependency the handler needs to stream a stored file.
@@ -33,42 +34,47 @@ func NewFileHandler(files fileFetcher, bucketReservation, bucketUser, bucketCert
 	}
 }
 
-func (h *FileHandler) ServeReservationFile(c *gin.Context) {
-	h.serve(c, h.bucketReservation)
+func (h *FileHandler) ServeReservationFile(w http.ResponseWriter, r *http.Request) {
+	h.serve(w, r, h.bucketReservation)
 }
 
-func (h *FileHandler) ServeUserFile(c *gin.Context) {
-	h.serve(c, h.bucketUser)
+func (h *FileHandler) ServeUserFile(w http.ResponseWriter, r *http.Request) {
+	h.serve(w, r, h.bucketUser)
 }
 
-func (h *FileHandler) ServeCertificateFile(c *gin.Context) {
-	h.serve(c, h.bucketCertificate)
+func (h *FileHandler) ServeCertificateFile(w http.ResponseWriter, r *http.Request) {
+	h.serve(w, r, h.bucketCertificate)
 }
 
-func (h *FileHandler) serve(c *gin.Context, bucketName string) {
-	object := c.Param("object")
+func (h *FileHandler) serve(w http.ResponseWriter, r *http.Request, bucketName string) {
+	object := r.PathValue("object")
 	if !validObjectName(object) {
-		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: "bad_request", Message: "invalid object name"})
+		httpx.WriteJSON(w, http.StatusBadRequest, dto.ErrorResponse{Error: "bad_request", Message: "invalid object name"})
 		return
 	}
 
-	data, err := h.files.GetObject(c.Request.Context(), bucketName, object)
+	data, err := h.files.GetObject(r.Context(), bucketName, object)
 	if err != nil {
 		if errors.Is(err, service.ErrObjectNotFound) {
-			c.JSON(http.StatusNotFound, dto.ErrorResponse{Error: "not_found", Message: "file not found"})
+			httpx.WriteJSON(w, http.StatusNotFound, dto.ErrorResponse{Error: "not_found", Message: "file not found"})
 			return
 		}
-		c.JSON(http.StatusInternalServerError, dto.ErrorResponse{Error: "internal_error", Message: "failed to fetch file"})
+		httpx.WriteJSON(w, http.StatusInternalServerError, dto.ErrorResponse{Error: "internal_error", Message: "failed to fetch file"})
 		return
 	}
 	defer data.Body.Close()
 
-	c.DataFromReader(http.StatusOK, data.Size, data.ContentType, data.Body, nil)
+	w.Header().Set("Content-Type", data.ContentType)
+	if data.Size >= 0 {
+		w.Header().Set("Content-Length", strconv.FormatInt(data.Size, 10))
+	}
+	w.WriteHeader(http.StatusOK)
+	_, _ = io.Copy(w, data.Body)
 }
 
 // validObjectName rejects empty names and anything that could traverse paths.
-// Gin's :object param never contains a slash, but we defend against "..", path
-// separators, and empty input explicitly.
+// A {object} path wildcard never contains a slash, but we defend against "..",
+// path separators, and empty input explicitly.
 func validObjectName(name string) bool {
 	if name == "" {
 		return false

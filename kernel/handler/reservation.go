@@ -3,12 +3,12 @@ package handler
 import (
 	"errors"
 	"labflow/dto"
+	"labflow/httpx"
 	"labflow/lifecycle"
 	"labflow/service"
 	"net/http"
 	"strconv"
 
-	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 )
 
@@ -20,16 +20,16 @@ func NewReservationHandler(rsvc *service.ReservationService) *ReservationHandler
 	return &ReservationHandler{rsvc: rsvc}
 }
 
-func (rh *ReservationHandler) CreateReservation(c *gin.Context) {
+func (rh *ReservationHandler) CreateReservation(w http.ResponseWriter, r *http.Request) {
 	var req dto.CreateReservationRequest
-	if err := dto.BindStrictJSON(c, &req); err != nil {
-		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: "invalid request", Message: err.Error()})
+	if err := dto.BindStrictJSON(r, &req); err != nil {
+		httpx.WriteJSON(w, http.StatusBadRequest, dto.ErrorResponse{Error: "invalid request", Message: err.Error()})
 		return
 	}
 
-	userID, exists := c.Get("id")
+	userID, exists := httpx.UserID(r.Context())
 	if !exists {
-		c.JSON(http.StatusUnauthorized, dto.ErrorResponse{Error: "unauthorized", Message: "user id not found"})
+		httpx.WriteJSON(w, http.StatusUnauthorized, dto.ErrorResponse{Error: "unauthorized", Message: "user id not found"})
 		return
 	}
 
@@ -43,7 +43,7 @@ func (rh *ReservationHandler) CreateReservation(c *gin.Context) {
 		}
 	}
 
-	resp, err := rh.rsvc.CreateReservation(c.Request.Context(), userID.(int), service.CreateReservationParams{
+	resp, err := rh.rsvc.CreateReservation(r.Context(), userID, service.CreateReservationParams{
 		SampleName:          req.SampleName,
 		SampleAmount:        req.SampleAmount,
 		ReceivedNote:        req.ReceivedNote,
@@ -58,7 +58,7 @@ func (rh *ReservationHandler) CreateReservation(c *gin.Context) {
 	})
 	if err != nil {
 		status, body := mapReservationError(err)
-		c.JSON(status, body)
+		httpx.WriteJSON(w, status, body)
 		return
 	}
 
@@ -72,7 +72,7 @@ func (rh *ReservationHandler) CreateReservation(c *gin.Context) {
 		}
 	}
 
-	c.JSON(http.StatusCreated, dto.CreateReservationResponse{
+	httpx.WriteJSON(w, http.StatusCreated, dto.CreateReservationResponse{
 		ID:                  resp.ID,
 		Xid:                 resp.Xid,
 		SampleName:          resp.SampleName,
@@ -88,47 +88,47 @@ func (rh *ReservationHandler) CreateReservation(c *gin.Context) {
 	})
 }
 
-func (rh *ReservationHandler) UpdateReservationsByXid(c *gin.Context) {
+func (rh *ReservationHandler) UpdateReservationsByXid(w http.ResponseWriter, r *http.Request) {
 	var req dto.UpdateReservationRequest
-	if err := dto.BindStrictJSON(c, &req); err != nil {
-		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: "invalid request", Message: err.Error()})
+	if err := dto.BindStrictJSON(r, &req); err != nil {
+		httpx.WriteJSON(w, http.StatusBadRequest, dto.ErrorResponse{Error: "invalid request", Message: err.Error()})
 		return
 	}
 
-	userID, exists := c.Get("id")
+	userID, exists := httpx.UserID(r.Context())
 	if !exists {
-		c.JSON(http.StatusUnauthorized, dto.ErrorResponse{Error: "unauthorized", Message: "user id not found"})
+		httpx.WriteJSON(w, http.StatusUnauthorized, dto.ErrorResponse{Error: "unauthorized", Message: "user id not found"})
 		return
 	}
 
-	xid := c.Param("xid")
+	xid := r.PathValue("xid")
 	xidParse, err := uuid.Parse(xid)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: "invalid xid", Message: err.Error()})
+		httpx.WriteJSON(w, http.StatusBadRequest, dto.ErrorResponse{Error: "invalid xid", Message: err.Error()})
 		return
 	}
-	if _, err := rh.rsvc.UpdateReservationByXid(c.Request.Context(), userID.(int), xidParse, service.UpdateReservationParams{
+	if _, err := rh.rsvc.UpdateReservationByXid(r.Context(), userID, xidParse, service.UpdateReservationParams{
 		POURL:       req.POUrl,
 		PONumber:    req.PONumber,
 		SamplePhoto: req.SamplePhoto,
 	}); err != nil {
 		status, body := mapReservationError(err)
-		c.JSON(status, body)
+		httpx.WriteJSON(w, status, body)
 		return
 	}
 
-	c.JSON(http.StatusOK, dto.SuccessResponse{Message: "Reservation updated"})
+	httpx.WriteJSON(w, http.StatusOK, dto.SuccessResponse{Message: "Reservation updated"})
 }
 
-func (rh *ReservationHandler) ListReservations(c *gin.Context) {
-	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
-	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "10"))
-	search := c.Query("search")
-	status := c.QueryArray("status")
-	sortBy := c.Query("sort_by")
-	sortOrder := c.Query("sort_order")
+func (rh *ReservationHandler) ListReservations(w http.ResponseWriter, r *http.Request) {
+	page, _ := strconv.Atoi(httpx.QueryDefault(r, "page", "1"))
+	limit, _ := strconv.Atoi(httpx.QueryDefault(r, "limit", "10"))
+	search := r.URL.Query().Get("search")
+	status := r.URL.Query()["status"]
+	sortBy := r.URL.Query().Get("sort_by")
+	sortOrder := r.URL.Query().Get("sort_order")
 
-	resp, err := rh.rsvc.ListReservations(c.Request.Context(), service.ListParams{
+	resp, err := rh.rsvc.ListReservations(r.Context(), service.ListParams{
 		Search:    search,
 		Status:    status,
 		Page:      page,
@@ -138,16 +138,16 @@ func (rh *ReservationHandler) ListReservations(c *gin.Context) {
 	})
 	if err != nil {
 		status, body := mapReservationError(err)
-		c.JSON(status, body)
+		httpx.WriteJSON(w, status, body)
 		return
 	}
 
 	var data []dto.ReservationResponse
-	for _, r := range resp.Data {
-		data = append(data, toReservationResponse(r, "Reservations Fetched Successfully"))
+	for _, res := range resp.Data {
+		data = append(data, toReservationResponse(res, "Reservations Fetched Successfully"))
 	}
 
-	c.JSON(http.StatusOK, dto.PaginatedReservationResponse{
+	httpx.WriteJSON(w, http.StatusOK, dto.PaginatedReservationResponse{
 		Data:       data,
 		Total:      resp.Total,
 		Page:       resp.Page,
@@ -156,15 +156,15 @@ func (rh *ReservationHandler) ListReservations(c *gin.Context) {
 	})
 }
 
-func (rh *ReservationHandler) GetReservationStats(c *gin.Context) {
-	resp, err := rh.rsvc.GetReservationStats(c.Request.Context())
+func (rh *ReservationHandler) GetReservationStats(w http.ResponseWriter, r *http.Request) {
+	resp, err := rh.rsvc.GetReservationStats(r.Context())
 	if err != nil {
 		status, body := mapReservationError(err)
-		c.JSON(status, body)
+		httpx.WriteJSON(w, status, body)
 		return
 	}
 
-	c.JSON(http.StatusOK, dto.ReservationStatsResponse{
+	httpx.WriteJSON(w, http.StatusOK, dto.ReservationStatsResponse{
 		Total:          resp.Total,
 		Pending:        resp.Pending,
 		SampleReceived: resp.SampleReceived,
@@ -174,53 +174,53 @@ func (rh *ReservationHandler) GetReservationStats(c *gin.Context) {
 	})
 }
 
-func (rh *ReservationHandler) GetReservationByXid(c *gin.Context) {
-	xid := c.Param("xid")
+func (rh *ReservationHandler) GetReservationByXid(w http.ResponseWriter, r *http.Request) {
+	xid := r.PathValue("xid")
 	xidParse, err := uuid.Parse(xid)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: "invalid xid", Message: err.Error()})
+		httpx.WriteJSON(w, http.StatusBadRequest, dto.ErrorResponse{Error: "invalid xid", Message: err.Error()})
 		return
 	}
 
-	resp, err := rh.rsvc.GetReservationByXid(c.Request.Context(), xidParse)
+	resp, err := rh.rsvc.GetReservationByXid(r.Context(), xidParse)
 	if err != nil {
 		status, body := mapReservationError(err)
-		c.JSON(status, body)
+		httpx.WriteJSON(w, status, body)
 		return
 	}
 
-	c.JSON(http.StatusOK, toReservationResponse(resp, "Reservation fetched"))
+	httpx.WriteJSON(w, http.StatusOK, toReservationResponse(resp, "Reservation fetched"))
 }
 
-func (rh *ReservationHandler) UpdateReservationStatus(c *gin.Context) {
+func (rh *ReservationHandler) UpdateReservationStatus(w http.ResponseWriter, r *http.Request) {
 	var req dto.UpdateStatusReq
-	if err := dto.BindStrictJSON(c, &req); err != nil {
-		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: "invalid request", Message: err.Error()})
+	if err := dto.BindStrictJSON(r, &req); err != nil {
+		httpx.WriteJSON(w, http.StatusBadRequest, dto.ErrorResponse{Error: "invalid request", Message: err.Error()})
 		return
 	}
 
-	userID, exists := c.Get("id")
+	userID, exists := httpx.UserID(r.Context())
 	if !exists {
-		c.JSON(http.StatusUnauthorized, dto.ErrorResponse{Error: "unauthorized", Message: "user id not found"})
+		httpx.WriteJSON(w, http.StatusUnauthorized, dto.ErrorResponse{Error: "unauthorized", Message: "user id not found"})
 		return
 	}
 
-	xid := c.Param("xid")
+	xid := r.PathValue("xid")
 	xidParse, err := uuid.Parse(xid)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: "invalid xid", Message: err.Error()})
+		httpx.WriteJSON(w, http.StatusBadRequest, dto.ErrorResponse{Error: "invalid xid", Message: err.Error()})
 		return
 	}
-	if _, err := rh.rsvc.UpdateReservationStatus(c.Request.Context(), userID.(int), xidParse, service.UpdateStatusParams{
+	if _, err := rh.rsvc.UpdateReservationStatus(r.Context(), userID, xidParse, service.UpdateStatusParams{
 		Status:      req.Status,
 		SamplePhoto: req.SamplePhoto,
 	}); err != nil {
 		status, body := mapReservationError(err)
-		c.JSON(status, body)
+		httpx.WriteJSON(w, status, body)
 		return
 	}
 
-	c.JSON(http.StatusOK, dto.SuccessResponse{Message: "Reservation status updated"})
+	httpx.WriteJSON(w, http.StatusOK, dto.SuccessResponse{Message: "Reservation status updated"})
 }
 
 func toReservationResponse(r service.ReservationResult, message string) dto.ReservationResponse {
