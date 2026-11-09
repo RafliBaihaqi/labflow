@@ -197,7 +197,8 @@ scrapes both.
 
 | Layer | Tool | Where | Count |
 | --- | --- | --- | --- |
-| Unit | `go test` | `kernel/**/_test.go` | 77 tests: services with fakes, lifecycle rules, middleware (RBAC, rate limit, metrics), config |
+| Unit | `go test` | `kernel/**/_test.go` | 48 test functions (plus table cases): services with fakes, lifecycle rules, middleware (RBAC, rate limit, metrics, CORS), `httpx`, router wiring, config |
+| Integration | `go test` + Postgres | `kernel/repo/` | 7 tests: every repository method against a migrated, seeded database (`TEST_DATABASE_URL`) |
 | End-to-end | Playwright | `app/e2e/` | 9 tests: landing page and quotation, auth redirect, login, RBAC on the API, logout revocation, reservation lifecycle across two roles |
 | Load | k6 | `loadtest/k6/` | 3 scenarios with SLO thresholds |
 
