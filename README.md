@@ -151,6 +151,35 @@ for CPU. ([`after-200rps.json`](loadtest/results/after-200rps.json))
 Test machine: a single laptop (Intel i3-1220P, 8 GB RAM) running the API, k6,
 Postgres, Redis and Prometheus all at once, so treat these numbers as a floor.
 
+### Gin + GORM vs net/http + sqlc
+
+The API started on Gin and GORM. Both were replaced, one at a time, and each
+step was measured with [`loadtest/bench`](loadtest/bench/bench.sh): the same
+k6 load against each build, in interleaved rounds, on a fresh seeded database,
+with the API limited to 2 CPUs and 512 MB.
+
+| RATE=60 (220 req/s), median of 3 rounds | Gin + GORM | net/http + GORM | net/http + sqlc |
+| --- | ---: | ---: | ---: |
+| Browse p50 | 4.3 ms | 4.4 ms | **2.9 ms** |
+| Browse p95 | 36.4 ms | 34.4 ms | **29.1 ms** |
+| Submit p95 | 50.5 ms | 54.2 ms | 47.2 ms |
+| API CPU at the same load | 108% | 109% | **100%** |
+| Third-party Go packages | 321 | 252 | 239 |
+| Binary (stripped) | 45.5 MB | 34.7 MB | 33.1 MB |
+
+*[Summary and raw rounds](loadtest/results/bench/20261109-112444/summary.md);
+round r1 is excluded for every build because the host itself was disturbed
+([notes](loadtest/results/bench/20261109-112444/NOTES.txt)).*
+
+- **Removing Gin changed size, not speed.** The router alone costs a few
+  microseconds either way ([`loadtest/microbench`](loadtest/microbench/router_test.go)),
+  next to about a millisecond per database round trip.
+- **Removing GORM changed the queries.** Preloads became joins: a dashboard
+  request runs 2 to 3 statements instead of 5, which is where the lower p50
+  and CPU come from.
+- Both builds return identical JSON for the same requests
+  ([`loadtest/bench/parity.py`](loadtest/bench/parity.py)).
+
 ### Reproduce it
 
 ```bash
@@ -227,6 +256,9 @@ proxy and TLS (see [`deployments/prod/README.md`](deployments/prod/README.md)).
 
 ## Design decisions
 
+- **Standard library over frameworks.** `net/http` routing (Go 1.22
+  patterns) plus a 150-line `httpx` package replaced Gin, and sqlc-generated
+  queries replaced GORM. The SQL that runs is the SQL in `sql/queries`.
 - **Go for the API.** One small static binary and cheap goroutines for
   I/O-bound request handling. The heap averaged about 34 MB during the load
   tests.

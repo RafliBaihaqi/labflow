@@ -1,0 +1,62 @@
+=== LabFlow Go Backend Entrypoint ===
+Checking migrations dir...
+total 120
+drwxr-xr-x    2 appuser  appgroup      4096 Nov  9 03:11 .
+drwxr-xr-x    3 appuser  appgroup      4096 Nov  9 03:14 ..
+-rw-rw-r--    1 appuser  appgroup        28 Nov  9 03:11 000001_create_users_table.down.sql
+-rw-rw-r--    1 appuser  appgroup       669 Nov  9 03:11 000001_create_users_table.up.sql
+-rw-rw-r--    1 appuser  appgroup        33 Nov  9 03:11 000002_create_categories_table.down.sql
+-rw-rw-r--    1 appuser  appgroup       267 Nov  9 03:11 000002_create_categories_table.up.sql
+-rw-rw-r--    1 appuser  appgroup        33 Nov  9 03:11 000003_create_test_lists_table.down.sql
+-rw-rw-r--    1 appuser  appgroup       613 Nov  9 03:11 000003_create_test_lists_table.up.sql
+-rw-rw-r--    1 appuser  appgroup        35 Nov  9 03:11 000004_create_reservations_table.down.sql
+-rw-rw-r--    1 appuser  appgroup      1293 Nov  9 03:11 000004_create_reservations_table.up.sql
+-rw-rw-r--    1 appuser  appgroup        28 Nov  9 03:11 000005_create_tests_table.down.sql
+-rw-rw-r--    1 appuser  appgroup       653 Nov  9 03:11 000005_create_tests_table.up.sql
+-rw-rw-r--    1 appuser  appgroup        35 Nov  9 03:11 000006_create_certificates_table.down.sql
+-rw-rw-r--    1 appuser  appgroup       575 Nov  9 03:11 000006_create_certificates_table.up.sql
+-rw-rw-r--    1 appuser  appgroup        32 Nov  9 03:11 000007_create_feedbacks_table.down.sql
+-rw-rw-r--    1 appuser  appgroup       592 Nov  9 03:11 000007_create_feedbacks_table.up.sql
+-rw-rw-r--    1 appuser  appgroup        33 Nov  9 03:11 000008_create_quotations_table.down.sql
+-rw-rw-r--    1 appuser  appgroup       352 Nov  9 03:11 000008_create_quotations_table.up.sql
+-rw-rw-r--    1 appuser  appgroup        31 Nov  9 03:11 000009_create_access_table.down.sql
+Running database migrations (attempt 1/10)...
+1/u create_users_table (44.14907ms)
+2/u create_categories_table (71.820996ms)
+3/u create_test_lists_table (93.616452ms)
+4/u create_reservations_table (119.198457ms)
+5/u create_tests_table (142.000679ms)
+6/u create_certificates_table (170.186701ms)
+7/u create_feedbacks_table (193.585839ms)
+8/u create_quotations_table (224.032847ms)
+9/u create_access_table (237.626537ms)
+10/u create_roles_table (253.020645ms)
+11/u create_role_accesses_table (272.564993ms)
+12/u create_user_roles_table (246.941198ms)
+13/u alter_sample_amount_to_double (231.467059ms)
+14/u add_is_approved_and_updated_by_test_table (218.89594ms)
+Migrations complete.
+Starting server...
+2026/11/09 04:59:03 Bucket reservations exists and you already own it.
+2026/11/09 04:59:03 Buckets initialized successfully.
+2026/11/09 04:59:03 Bucket users exists and you already own it.
+2026/11/09 04:59:03 Buckets initialized successfully.
+2026/11/09 04:59:03 Bucket certificates exists and you already own it.
+2026/11/09 04:59:03 Buckets initialized successfully.
+2026/11/09 04:59:03 Bucket init completed
+asynq: pid=1 2026/11/09 04:59:03.707126 INFO: Starting processing
+2026/11/09 04:59:03 Seeded user: superuser (superuser@labflow.local) with role_id 1
+2026/11/09 04:59:03 Seeded user: admin (admin@labflow.local) with role_id 1
+2026/11/09 04:59:03 Seeded user: qa (qa@labflow.local) with role_id 3
+2026/11/09 04:59:03 Seeded user: customer (customer@labflow.local) with role_id 2
+2026/11/09 04:59:03 Seeded user: micro_analyst (micro_analyst@labflow.local) with role_id 4
+2026/11/09 04:59:04 Seeded user: chem_analyst (chem_analyst@labflow.local) with role_id 5
+2026/11/09 04:59:04 Seeded user: micro_qc (micro_qc@labflow.local) with role_id 6
+2026/11/09 04:59:04 Seeded user: chem_qc (chem_qc@labflow.local) with role_id 7
+2026/11/09 04:59:04 Seeded user: lab_head (lab_head@labflow.local) with role_id 8
+2026/11/09 04:59:04 Seeded user: mr (mr@labflow.local) with role_id 9
+2026/11/09 04:59:04 Database seeded.
+asynq: pid=1 2026/11/09 04:59:04.024051 INFO: Starting graceful shutdown
+asynq: pid=1 2026/11/09 04:59:04.265678 INFO: Waiting for all workers to finish...
+asynq: pid=1 2026/11/09 04:59:04.265716 INFO: All workers have finished
+asynq: pid=1 2026/11/09 04:59:04.268046 INFO: Exiting

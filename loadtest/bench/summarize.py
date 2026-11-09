@@ -1,6 +1,10 @@
 """Summarize a bench.sh run: median of each metric across rounds, per variant.
 
-    python3 loadtest/bench/summarize.py loadtest/results/bench/<run-id>
+    python3 loadtest/bench/summarize.py loadtest/results/bench/<run-id> [--exclude r1,...]
+
+--exclude drops whole rounds (for every build) from the medians, for example a
+round in which the machine itself was disturbed. Excluded rounds are named in
+the output so the numbers stay traceable.
 
 Writes summary.json and summary.md next to the raw results.
 """
@@ -55,14 +59,16 @@ def k6_metrics(path):
     }
 
 
-def main(run_dir):
+def main(run_dir, exclude=()):
     run_dir = Path(run_dir)
     meta = json.loads((run_dir / "meta.json").read_text())
-    summary = {"meta": meta, "variants": {}}
+    summary = {"meta": meta, "excluded_rounds": list(exclude), "variants": {}}
     for label, info in meta["variants"].items():
         rounds = []
         for k6_file in sorted(run_dir.glob(f"{label}-r*.json")):
             if not re.fullmatch(rf"{re.escape(label)}-r\d+\.json", k6_file.name):
+                continue
+            if k6_file.stem.rsplit("-", 1)[1] in exclude:
                 continue
             row = k6_metrics(k6_file)
             row.update(stats_from_csv(k6_file.with_name(k6_file.stem + "-stats.csv")))
@@ -84,8 +90,9 @@ def main(run_dir):
     ]
     labels = list(summary["variants"])
     warmup = meta.get("warmup_rounds", 0)
-    lines = [f"Median of {meta['rounds']} rounds"
+    lines = [f"Median of {meta['rounds'] - len(exclude)} rounds"
              + (f" (after {warmup} unrecorded warm-up round{'s' if warmup != 1 else ''})" if warmup else "")
+             + (f", excluding round {', '.join(exclude)}" if exclude else "")
              + f" at RATE={meta['rate']}, DURATION={meta['duration']}. "
              f"Host: {meta['host']}. API limited to {meta['api_cpus']} CPUs / {meta['api_memory']}.", "",
              "| Metric | " + " | ".join(labels) + " |", "| --- |" + " ---: |" * len(labels)]
@@ -103,4 +110,7 @@ def main(run_dir):
 
 
 if __name__ == "__main__":
-    main(sys.argv[1])
+    excluded = ()
+    if len(sys.argv) > 3 and sys.argv[2] == "--exclude":
+        excluded = tuple(sys.argv[3].split(","))
+    main(sys.argv[1], excluded)

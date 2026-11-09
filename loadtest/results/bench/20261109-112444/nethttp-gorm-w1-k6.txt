@@ -1,0 +1,9 @@
+
+scenario  p50       p95       p99
+browse    5.6ms     1475.8ms  3302.9ms
+submit    31.5ms    764.0ms   1702.9ms
+login     269.9ms   1603.3ms  2352.2ms
+requests: 34662 (216/s)  failed: 0.00%
+reservations created: 480
+THRESHOLDS FAILED: http_req_duration{scenario:submit}, http_req_duration{scenario:browse}, http_req_duration{scenario:login}
+time="2026-11-09T04:32:44Z" level=error msg="thresholds on metrics 'http_req_duration{scenario:browse}, http_req_duration{scenario:login}, http_req_duration{scenario:submit}' have been crossed"
