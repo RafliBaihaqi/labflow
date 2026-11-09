@@ -2,84 +2,55 @@ package repo
 
 import (
 	"context"
-	"fmt"
 	"labflow/models"
-	"time"
+	"labflow/sqlc"
 
 	"github.com/google/uuid"
-	"gorm.io/gorm"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type TestRepo struct {
-	db *gorm.DB
+	q *sqlc.Queries
 }
 
-func NewTestRepo(db *gorm.DB) *TestRepo {
-	return &TestRepo{db: db}
-}
-
-type UpdateTestParams struct {
-	TestResult  *string
-	TestSummary *string
-	Notes       *string
-	UpdatedBy   *int
-	IsApproved  *bool
+func NewTestRepo(pool *pgxpool.Pool) *TestRepo {
+	return &TestRepo{q: sqlc.New(pool)}
 }
 
 func (t *TestRepo) GetTestByXid(ctx context.Context, xid uuid.UUID) (*models.Test, error) {
-	var test *models.Test
-	if err := t.db.WithContext(ctx).Preload("TestList.Category").Where("xid = ?", xid).First(&test).Error; err != nil {
+	row, err := t.q.GetTestWithCategory(ctx, xid)
+	if err != nil {
 		return nil, wrapDBError(err)
 	}
-	return test, nil
+	test := toTest(row.Test)
+	test.TestList = toTestListWithCategory(row.TestList, row.Category)
+	return &test, nil
 }
 
 func (t *TestRepo) UpdateTestByXid(ctx context.Context, xid uuid.UUID, testResult, testSummary, notes *string, updatedBy int) (*models.Test, error) {
-	params := UpdateTestParams{
+	row, err := t.q.UpdateTestResult(ctx, sqlc.UpdateTestResultParams{
+		Xid:         xid,
 		TestResult:  testResult,
 		TestSummary: testSummary,
 		Notes:       notes,
 		UpdatedBy:   &updatedBy,
-	}
-
-	test := map[string]interface{}{
-		"test_result":  params.TestResult,
-		"test_summary": params.TestSummary,
-		"notes":        params.Notes,
-		"updated_by":   params.UpdatedBy,
-	}
-
-	if err := t.db.Model(&models.Test{}).Where("xid = ?", xid).Updates(test).Error; err != nil {
-		return nil, fmt.Errorf("failed to update test: %w", wrapDBError(err))
-	}
-
-	var updateTest models.Test
-	if err := t.db.Where("xid = ?", xid).First(&updateTest).Error; err != nil {
+	})
+	if err != nil {
 		return nil, wrapDBError(err)
 	}
-	return &updateTest, nil
+	test := toTest(row)
+	return &test, nil
 }
 
 func (t *TestRepo) UpdateIsApproved(ctx context.Context, xid uuid.UUID, isApproved *bool, updatedBy int) (*models.Test, error) {
-	params := UpdateTestParams{
+	row, err := t.q.UpdateTestApproval(ctx, sqlc.UpdateTestApprovalParams{
+		Xid:        xid,
 		IsApproved: isApproved,
 		UpdatedBy:  &updatedBy,
-	}
-
-	test := map[string]interface{}{
-		"approved_date": time.Now(),
-		"updated_by":    params.UpdatedBy,
-		"is_approved":   params.IsApproved,
-	}
-
-	if err := t.db.Model(&models.Test{}).Where("xid = ?", xid).Updates(test).Error; err != nil {
-		return nil, fmt.Errorf("failed to update test: %w", wrapDBError(err))
-	}
-
-	var ad models.Test
-	if err := t.db.Where("xid = ?", xid).First(&ad).Error; err != nil {
+	})
+	if err != nil {
 		return nil, wrapDBError(err)
 	}
-
-	return &ad, nil
+	test := toTest(row)
+	return &test, nil
 }

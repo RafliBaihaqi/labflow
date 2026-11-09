@@ -4,119 +4,108 @@ import (
 	"context"
 	"fmt"
 	"labflow/models"
+	"labflow/sqlc"
 
 	"github.com/google/uuid"
-	"gorm.io/gorm"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type AuthRepo struct {
-	db *gorm.DB
+	pool *pgxpool.Pool
+	q    *sqlc.Queries
 }
 
-func NewAuthRepo(db *gorm.DB) *AuthRepo {
-	return &AuthRepo{db: db}
-}
-
-type CreateUserParams struct {
-	Username    string
-	Password    string
-	Email       string
-	PhoneNumber string
-	Name        string
-	Company     string
-	Address     string
-	RoleID      int
+func NewAuthRepo(pool *pgxpool.Pool) *AuthRepo {
+	return &AuthRepo{pool: pool, q: sqlc.New(pool)}
 }
 
 func (r *AuthRepo) CreateUser(ctx context.Context, username, password, email string, phoneNumber string, name string, company, address string, roleID int) (*models.User, error) {
-	params := CreateUserParams{
-		Username:    username,
-		Password:    password,
-		Email:       email,
-		PhoneNumber: phoneNumber,
-		Name:        name,
-		Company:     company,
-		Address:     address,
-		RoleID:      roleID,
-	}
-
-	user := models.User{
-		XID:         uuid.New(),
-		Username:    params.Username,
-		Password:    params.Password,
-		Email:       params.Email,
-		PhoneNumber: params.PhoneNumber,
-		Name:        params.Name,
-		Company:     params.Company,
-		Address:     params.Address,
-	}
-
-	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Create(&user).Error; err != nil {
+	var user models.User
+	err := inTx(ctx, r.pool, func(q *sqlc.Queries) error {
+		row, err := q.CreateUser(ctx, sqlc.CreateUserParams{
+			Xid:         uuid.New(),
+			Username:    username,
+			Password:    password,
+			Email:       email,
+			PhoneNumber: &phoneNumber,
+			Name:        name,
+			Company:     &company,
+			Address:     &address,
+		})
+		if err != nil {
 			return fmt.Errorf("failed to insert user: %w", wrapDBError(err))
 		}
+		user = toUser(row)
 
-		if params.RoleID > 0 {
-			userRole := models.UserRole{
-				UserID: user.ID,
-				RoleID: params.RoleID,
-			}
-			if err := tx.Create(&userRole).Error; err != nil {
+		if roleID > 0 {
+			if err := q.AddUserRole(ctx, sqlc.AddUserRoleParams{UserID: user.ID, RoleID: roleID}); err != nil {
 				return fmt.Errorf("failed to map user role: %w", wrapDBError(err))
 			}
 		}
 		return nil
 	})
-
 	if err != nil {
 		return nil, err
 	}
-
 	return &user, nil
 }
 
 func (r *AuthRepo) GetUserByUsername(ctx context.Context, username string) (*models.User, error) {
-	var user models.User
-	if err := r.db.WithContext(ctx).Where("username=?", username).First(&user).Error; err != nil {
+	row, err := r.q.GetUserByUsername(ctx, username)
+	if err != nil {
 		return nil, wrapDBError(err)
 	}
+	user := toUser(row)
 	return &user, nil
 }
 
 func (r *AuthRepo) GetUserByEmail(ctx context.Context, email string) (*models.User, error) {
-	var user models.User
-	if err := r.db.WithContext(ctx).Where("email=?", email).First(&user).Error; err != nil {
+	row, err := r.q.GetUserByEmail(ctx, email)
+	if err != nil {
 		return nil, wrapDBError(err)
 	}
+	user := toUser(row)
 	return &user, nil
 }
 
 func (r *AuthRepo) UpdateUserVerifiedStatus(ctx context.Context, email string) (*models.User, error) {
-	if err := r.db.WithContext(ctx).Model(&models.User{}).Where("email = ?", email).Update("is_verified", true).Error; err != nil {
+	row, err := r.q.SetUserVerified(ctx, email)
+	if err != nil {
 		return nil, wrapDBError(err)
 	}
-	var user models.User
-	if err := r.db.WithContext(ctx).Where("email = ?", email).First(&user).Error; err != nil {
-		return nil, wrapDBError(err)
-	}
+	user := toUser(row)
 	return &user, nil
 }
 
+// GetUserByID returns the user with their roles and each role's accesses.
 func (r *AuthRepo) GetUserByID(ctx context.Context, userID int) (*models.User, error) {
-	var user models.User
-	if err := r.db.WithContext(ctx).Preload("Roles.Accesses").First(&user, userID).Error; err != nil {
+	row, err := r.q.GetUserByID(ctx, userID)
+	if err != nil {
 		return nil, wrapDBError(err)
+	}
+	user := toUser(row)
+
+	perms, err := r.q.ListUserPermissions(ctx, userID)
+	if err != nil {
+		return nil, wrapDBError(err)
+	}
+	for _, p := range perms {
+		if n := len(user.Roles); n == 0 || user.Roles[n-1].ID != p.RoleID {
+			user.Roles = append(user.Roles, models.Role{ID: p.RoleID, RoleName: p.RoleName})
+		}
+		if p.AccessID != nil {
+			role := &user.Roles[len(user.Roles)-1]
+			role.Accesses = append(role.Accesses, models.Access{ID: *p.AccessID, AccessName: p.AccessName})
+		}
 	}
 	return &user, nil
 }
 
 func (r *AuthRepo) UpdateUserPassword(ctx context.Context, email string, hashedPassword string) (*models.User, error) {
-	if err := r.db.WithContext(ctx).Model(&models.User{}).Where("email = ?", email).Update("password", hashedPassword).Error; err != nil {
+	row, err := r.q.SetUserPassword(ctx, sqlc.SetUserPasswordParams{Email: email, Password: hashedPassword})
+	if err != nil {
 		return nil, wrapDBError(err)
 	}
-	var user models.User
-	if err := r.db.Where("email = ?", email).First(&user).Error; err != nil {
-		return nil, wrapDBError(err)
-	}
+	user := toUser(row)
 	return &user, nil
 }

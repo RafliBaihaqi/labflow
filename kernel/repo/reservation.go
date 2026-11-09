@@ -4,252 +4,200 @@ import (
 	"context"
 	"fmt"
 	"labflow/models"
+	"labflow/sqlc"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
-	"gorm.io/gorm"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type ReservationRepo struct {
-	db *gorm.DB
+	pool *pgxpool.Pool
+	q    *sqlc.Queries
 }
 
-func NewReservationRepo(db *gorm.DB) *ReservationRepo {
-	return &ReservationRepo{db: db}
-}
-
-type UpsertReservationParams struct {
-	UserID              int
-	SampleName          string
-	SampleAmount        float64
-	ReceivedNote        *string
-	TestRequestNumber   *string
-	SampleResidue       string
-	SpecialInstructions *string
-	POURL               *string
-	PONumber            *string
-	SampleType          string
-	SamplePhoto         *string
-	StartTestDate       *time.Time
-	EndTestDate         *time.Time
-	Note                *string
-	SAPNotes            *string
-	BatchNumber         *string
-	SampleTakenDate     time.Time
-	SampleTakenBy       string
-	IsKan               *bool
-	Tests               []models.TestItem
-	UpdatedBy           *int
-}
-
-type UpdateStatusParams struct {
-	Status      string
-	UpdatedBy   *int
-	SamplePhoto *string
+func NewReservationRepo(pool *pgxpool.Pool) *ReservationRepo {
+	return &ReservationRepo{pool: pool, q: sqlc.New(pool)}
 }
 
 func (r *ReservationRepo) CreateReservationWithTests(ctx context.Context, userID int, sampleName string, sampleAmount float64, receivedNote *string, sampleResidue string, specialInstructions *string, sampleType string, note *string, batchNumber *string, sampleTakenDate time.Time, sampleTakenBy string, testRequestNumber *string, tests []models.TestItem) (*models.Reservation, error) {
-	params := UpsertReservationParams{
-		UserID:              userID,
-		SampleName:          sampleName,
-		SampleAmount:        sampleAmount,
-		ReceivedNote:        receivedNote,
-		SampleResidue:       sampleResidue,
-		SpecialInstructions: specialInstructions,
-		SampleType:          sampleType,
-		Note:                note,
-		BatchNumber:         batchNumber,
-		SampleTakenDate:     sampleTakenDate,
-		SampleTakenBy:       sampleTakenBy,
-		TestRequestNumber:   testRequestNumber,
-		Tests:               tests,
-	}
-
-	reservation := models.Reservation{
-		XID:                 uuid.New(),
-		UserID:              params.UserID,
-		ReservationDate:     time.Now(),
-		SampleName:          params.SampleName,
-		SampleAmount:        params.SampleAmount,
-		ReceivedNote:        params.ReceivedNote,
-		SampleResidue:       params.SampleResidue,
-		SpecialInstructions: params.SpecialInstructions,
-		SampleType:          params.SampleType,
-		Note:                params.Note,
-		BatchNumber:         params.BatchNumber,
-		SampleTakenDate:     params.SampleTakenDate,
-		SampleTakenBy:       params.SampleTakenBy,
-		TestRequestNumber:   params.TestRequestNumber,
-	}
-
-	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Create(&reservation).Error; err != nil {
+	var reservation models.Reservation
+	err := inTx(ctx, r.pool, func(q *sqlc.Queries) error {
+		row, err := q.CreateReservation(ctx, sqlc.CreateReservationParams{
+			Xid:                 uuid.New(),
+			UserID:              userID,
+			ReservationDate:     time.Now(),
+			SampleName:          sampleName,
+			SampleAmount:        sampleAmount,
+			ReceivedNote:        receivedNote,
+			TestRequestNumber:   testRequestNumber,
+			SampleResidue:       sampleResidue,
+			SpecialInstructions: specialInstructions,
+			SampleType:          sampleType,
+			Note:                note,
+			BatchNumber:         batchNumber,
+			SampleTakenDate:     sampleTakenDate,
+			SampleTakenBy:       sampleTakenBy,
+		})
+		if err != nil {
 			return fmt.Errorf("failed to create reservation: %w", wrapDBError(err))
 		}
+		reservation = toReservation(row)
 
-		tests := make([]models.Test, len(params.Tests))
-
-		for i, t := range params.Tests {
-			tests[i] = models.Test{
-				XID:           uuid.New(),
-				ReservationID: reservation.ID,
-				TestListID:    t.TestListID,
-				Method:        t.Method,
-				Criteria:      t.Criteria,
-				TestUnit:      t.TestUnit,
-			}
+		if len(tests) == 0 {
+			return nil
 		}
-
-		if len(tests) > 0 {
-			if err := tx.Create(&tests).Error; err != nil {
-				return fmt.Errorf("failed to create tests: %w", wrapDBError(err))
-			}
+		params := sqlc.CreateTestsParams{ReservationID: reservation.ID}
+		for _, t := range tests {
+			params.Xids = append(params.Xids, uuid.New())
+			params.TestListIds = append(params.TestListIds, t.TestListID)
+			params.Methods = append(params.Methods, t.Method)
+			params.Criteria = append(params.Criteria, t.Criteria)
+			params.TestUnits = append(params.TestUnits, t.TestUnit)
 		}
-		reservation.Tests = tests
+		rows, err := q.CreateTests(ctx, params)
+		if err != nil {
+			return fmt.Errorf("failed to create tests: %w", wrapDBError(err))
+		}
+		for _, t := range rows {
+			reservation.Tests = append(reservation.Tests, toTest(t))
+		}
 		return nil
 	})
-
 	if err != nil {
 		return nil, err
 	}
-
 	return &reservation, nil
 }
 
-var allowedReservationSort = map[string]string{
-	"test_request_number": "test_request_number",
-	"sample_name":         "sample_name",
-	"status":              "status",
-	"reservation_date":    "reservation_date",
+var allowedReservationSort = map[string]bool{
+	"test_request_number": true,
+	"sample_name":         true,
+	"status":              true,
+	"reservation_date":    true,
 }
 
 func (r *ReservationRepo) GetAllReservations(ctx context.Context, search string, status []string, page, limit int, sortBy, sortOrder string) ([]models.Reservation, int64, error) {
-	var reservations []models.Reservation
-	var total int64
-
-	query := r.db.WithContext(ctx).Model(&models.Reservation{})
-
-	if search != "" {
-		like := "%" + search + "%"
-		query = query.Where("sample_name ILIKE ? OR test_request_number ILIKE ?", like, like)
-	}
-	if len(status) > 0 {
-		query = query.Where("status IN ?", status)
+	pattern := likePattern(search)
+	if status == nil {
+		status = []string{}
 	}
 
-	if err := query.Count(&total).Error; err != nil {
+	total, err := r.q.CountReservations(ctx, sqlc.CountReservationsParams{Search: pattern, Statuses: status})
+	if err != nil {
 		return nil, 0, wrapDBError(err)
 	}
 
-	orderColumn, ok := allowedReservationSort[sortBy]
-	if !ok {
-		orderColumn = "created_at"
+	column := sortBy
+	if !allowedReservationSort[column] {
+		column = "created_at"
 	}
-	orderDir := "DESC"
+	direction := "desc"
 	if strings.ToLower(sortOrder) == "asc" {
-		orderDir = "ASC"
+		direction = "asc"
 	}
+	pageLimit, offset := pageBounds(page, limit)
 
-	offset := (page - 1) * limit
-	if err := query.Preload("User").Preload("Tests.TestList").
-		Order(fmt.Sprintf("%s %s", orderColumn, orderDir)).
-		Limit(limit).
-		Offset(offset).
-		Find(&reservations).Error; err != nil {
+	rows, err := r.q.ListReservations(ctx, sqlc.ListReservationsParams{
+		Search:     pattern,
+		Statuses:   status,
+		Sort:       column + ":" + direction,
+		PageLimit:  pageLimit,
+		PageOffset: offset,
+	})
+	if err != nil {
 		return nil, 0, wrapDBError(err)
 	}
 
+	reservations := make([]models.Reservation, len(rows))
+	ids := make([]int, len(rows))
+	index := make(map[int]int, len(rows))
+	for i, row := range rows {
+		reservations[i] = toReservation(row.Reservation)
+		reservations[i].User = toUser(row.User)
+		ids[i] = row.Reservation.ID
+		index[row.Reservation.ID] = i
+	}
+	if len(ids) == 0 {
+		return reservations, total, nil
+	}
+
+	tests, err := r.q.ListTestsByReservations(ctx, ids)
+	if err != nil {
+		return nil, 0, wrapDBError(err)
+	}
+	for _, row := range tests {
+		test := toTest(row.Test)
+		test.TestList = toTestList(row.TestList)
+		res := &reservations[index[row.Test.ReservationID]]
+		res.Tests = append(res.Tests, test)
+	}
 	return reservations, total, nil
 }
 
 func (r *ReservationRepo) GetReservationStats(ctx context.Context) (map[string]int64, int64, error) {
-	type statusCount struct {
-		Status *string
-		Count  int64
-	}
-	var rows []statusCount
-	if err := r.db.WithContext(ctx).
-		Model(&models.Reservation{}).
-		Select("status, count(*) as count").
-		Group("status").
-		Scan(&rows).Error; err != nil {
+	rows, err := r.q.CountReservationsByStatus(ctx)
+	if err != nil {
 		return nil, 0, wrapDBError(err)
 	}
 
 	counts := make(map[string]int64)
 	var total int64
 	for _, row := range rows {
-		key := ""
-		if row.Status != nil {
-			key = *row.Status
-		}
-		counts[key] = row.Count
+		counts[deref(row.Status)] = row.Count
 		total += row.Count
 	}
 	return counts, total, nil
 }
 
 func (r *ReservationRepo) UpdateReservationByXid(ctx context.Context, xid uuid.UUID, poURL, poNumber, samplePhoto *string, updatedBy int) (*models.Reservation, error) {
-	params := UpsertReservationParams{
-		POURL:       poURL,
-		PONumber:    poNumber,
+	row, err := r.q.UpdateReservationDocuments(ctx, sqlc.UpdateReservationDocumentsParams{
+		Xid:         xid,
+		PoUrl:       poURL,
+		PoNumber:    poNumber,
 		SamplePhoto: samplePhoto,
 		UpdatedBy:   &updatedBy,
-	}
-
-	updates := map[string]interface{}{
-		"po_url":       params.POURL,
-		"po_number":    params.PONumber,
-		"sample_photo": params.SamplePhoto,
-		"updated_at":   time.Now(),
-		"updated_by":   params.UpdatedBy,
-	}
-
-	if err := r.db.Model(&models.Reservation{}).Where("xid = ?", xid).Updates(updates).Error; err != nil {
-		return nil, fmt.Errorf("failed to update reservation: %w", wrapDBError(err))
-	}
-
-	var updated models.Reservation
-	if err := r.db.Where("xid = ?", xid).First(&updated).Error; err != nil {
+	})
+	if err != nil {
 		return nil, wrapDBError(err)
 	}
-
+	updated := toReservation(row)
 	return &updated, nil
 }
 
+// GetReservationByXid returns the reservation with its user, and its tests
+// with each test's catalog entry and category.
 func (r *ReservationRepo) GetReservationByXid(ctx context.Context, xid uuid.UUID) (*models.Reservation, error) {
-	var reservation *models.Reservation
-	if err := r.db.WithContext(ctx).Preload("User").Preload("Tests.TestList.Category").Where("xid = ?", xid).First(&reservation).Error; err != nil {
+	row, err := r.q.GetReservationWithUser(ctx, xid)
+	if err != nil {
 		return nil, wrapDBError(err)
 	}
-	return reservation, nil
+	reservation := toReservation(row.Reservation)
+	reservation.User = toUser(row.User)
+
+	tests, err := r.q.ListTestsWithCategory(ctx, reservation.ID)
+	if err != nil {
+		return nil, wrapDBError(err)
+	}
+	for _, t := range tests {
+		test := toTest(t.Test)
+		test.TestList = toTestListWithCategory(t.TestList, t.Category)
+		reservation.Tests = append(reservation.Tests, test)
+	}
+	return &reservation, nil
 }
 
 func (r *ReservationRepo) UpdateReservationStatus(ctx context.Context, xid uuid.UUID, status string, updatedBy int, samplePhoto *string) (*models.Reservation, error) {
-	params := UpdateStatusParams{
-		Status:      status,
+	row, err := r.q.UpdateReservationStatus(ctx, sqlc.UpdateReservationStatusParams{
+		Xid:         xid,
+		Status:      &status,
 		UpdatedBy:   &updatedBy,
 		SamplePhoto: samplePhoto,
-	}
-
-	updates := map[string]interface{}{
-		"status":     params.Status,
-		"updated_by": params.UpdatedBy,
-	}
-
-	if params.SamplePhoto != nil {
-		updates["sample_photo"] = params.SamplePhoto
-	}
-
-	if err := r.db.WithContext(ctx).Model(&models.Reservation{}).Where("xid = ?", xid).Updates(updates).Error; err != nil {
-		return nil, fmt.Errorf("failed to update reservation status: %w", wrapDBError(err))
-	}
-
-	var updated models.Reservation
-	if err := r.db.WithContext(ctx).Where("xid = ?", xid).First(&updated).Error; err != nil {
+	})
+	if err != nil {
 		return nil, wrapDBError(err)
 	}
-
+	updated := toReservation(row)
 	return &updated, nil
 }

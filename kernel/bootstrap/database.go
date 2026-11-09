@@ -8,33 +8,33 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
-	"gorm.io/driver/postgres"
-	"gorm.io/gorm"
 )
 
-func ConnectToDB() (*gorm.DB, error) {
-	var err error
-	dsn := os.Getenv("DATABASE_URL")
-	DB, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
+func ConnectToDB() (*pgxpool.Pool, error) {
+	cfg, err := pgxpool.ParseConfig(os.Getenv("DATABASE_URL"))
+	if err != nil {
+		log.Fatal("Invalid DATABASE_URL:", err)
+	}
 
+	// Bound the pool. Without a cap, every in-flight request under load gets its
+	// own connection until Postgres refuses with "too many clients"
+	// (default max_connections = 100). Idle connections close after 5 minutes.
+	cfg.MaxConns = int32(envInt("DB_MAX_OPEN_CONNS", 25))
+	cfg.MaxConnLifetime = 30 * time.Minute
+	cfg.MaxConnIdleTime = 5 * time.Minute
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
 		log.Fatal("Failed to connect to the DB:", err)
 	}
-
-	// Bound the pool. database/sql defaults to unlimited open connections, which
-	// under load opens one connection per in-flight request until Postgres
-	// refuses with "too many clients" (default max_connections = 100).
-	sqlDB, err := DB.DB()
-	if err != nil {
-		log.Fatal("Failed to get DB handle:", err)
+	if err := pool.Ping(ctx); err != nil {
+		log.Fatal("Failed to connect to the DB:", err)
 	}
-	maxOpen := envInt("DB_MAX_OPEN_CONNS", 25)
-	sqlDB.SetMaxOpenConns(maxOpen)
-	sqlDB.SetMaxIdleConns(envInt("DB_MAX_IDLE_CONNS", maxOpen))
-	sqlDB.SetConnMaxLifetime(30 * time.Minute)
-	sqlDB.SetConnMaxIdleTime(5 * time.Minute)
-	return DB, nil
+	return pool, nil
 }
 
 func envInt(key string, fallback int) int {

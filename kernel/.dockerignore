@@ -19,10 +19,8 @@ node_modules
 .DS_Store
 Thumbs.db
 docs/
-sqlc/
 # Do NOT ignore *.sql globally - migrations must be copied into image
 # Old line "*.sql" removed - it was breaking COPY sql/migrations
-sqlc.yaml
 Makefile
 README.md
 coverage.*
