@@ -98,7 +98,7 @@ jobs:
 
       - name: Docker meta - backend
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v6
         with:
           images: ${{ env.REGISTRY }}/${{ steps.owner.outputs.owner }}/labflow-backend
           tags: |
@@ -155,7 +155,7 @@ jobs:
 
       - name: Docker meta - frontend
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v6
         with:
           images: ${{ env.REGISTRY }}/${{ steps.owner.outputs.owner }}/labflow-frontend
           tags: |
