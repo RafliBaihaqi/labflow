@@ -56,7 +56,7 @@ jobs:
           echo "  compose from branch=${{ inputs.branch || 'main' }}"
 
       - name: Copy docker-compose.yml to VPS (no git clone needed)
-        uses: appleboy/scp-action@v0.1.7
+        uses: appleboy/scp-action@v1.0.0
         with:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
