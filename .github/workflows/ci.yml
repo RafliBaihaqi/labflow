@@ -18,7 +18,7 @@ jobs:
       run:
         working-directory: kernel
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Set up Go
         uses: actions/setup-go@v5
@@ -53,7 +53,7 @@ jobs:
       run:
         working-directory: app
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Set up Node
         uses: actions/setup-node@v4
@@ -80,7 +80,7 @@ jobs:
     env:
       COMPOSE: docker compose -f deployments/loadtest/docker-compose.yml --profile app
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Start stack (backend, Postgres, Redis, S3, Prometheus)
         run: |
@@ -149,7 +149,7 @@ jobs:
     name: Docker - Lint Dockerfiles
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Hadolint - backend
         uses: hadolint/hadolint-action@v3.5.0
         with:
@@ -165,7 +165,7 @@ jobs:
     name: Compose - Validate
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Create dummy .env for prod compose validation (env_file required)
         run: |
           touch deployments/prod/.env
@@ -203,7 +203,7 @@ jobs:
     name: Docs - Markdown Policy
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Fail if non-README markdown files are tracked
         run: |
           violations=$(git ls-files '*.md' '*.MD' | grep -viE '(^|/)README\.md$' || true)
